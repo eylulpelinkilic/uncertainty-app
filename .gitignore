@@ -1,0 +1,19 @@
+# Raw Data
+*.xlsx
+*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Notebook checkpoints
+.ipynb_checkpoints
+
+# Environment files
+.env
+venv/
+*.env
