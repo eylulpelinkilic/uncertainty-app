@@ -5,6 +5,10 @@ import pickle
 import os
 import plotly.graph_objects as go
 from sklearn.neighbors import NearestNeighbors
+from scipy.stats import gaussian_kde
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')  # Non-interactive backend
 
 # --- CONSTANTS ---
 # Renk Paleti
@@ -82,6 +86,7 @@ LANG_STRINGS = {
     "legend_g1": {"ENG": "Grup 1 (Myocarditis)", "TR": "Grup 1 (Miyokardit)"},
     "legend_g2": {"ENG": "Grup 2 (ACS)", "TR": "Grup 2 (AKS)"},
     "legend_new": {"ENG": "New Patient", "TR": "Yeni Hasta"},
+    "legend_uncertain": {"ENG": "Uncertain", "TR": "Belirsiz"},
     "legend_title": {"ENG": "Diagnosis", "TR": "Tanı"},
     "bar_chart_title": {"ENG": "Patient's Uncertainty Vector", "TR": "Hastanın Belirsizlik Vektörü"},
     "bar_xaxis": {"ENG": "Uncertainty Score", "TR": "Belirsizlik Skoru"},
@@ -188,6 +193,8 @@ def load_artifacts():
         embedding_data = np.load(EMBEDDING_PATH)
         with open(IMPUTATION_PATH, "rb") as f: imputation_values = pickle.load(f)
         feature_list = list(model_artifacts.keys())
+        # Sadece ALL_FEATURES listesindeki feature'ları kullan
+        feature_list = [f for f in feature_list if f in ALL_FEATURES]
         if not all(f in imputation_values for f in feature_list):
              raise Exception("Imputation map is missing features present in the model.")
         return model_artifacts, scaler, embedding_data, imputation_values, feature_list
@@ -202,6 +209,7 @@ def predict_patient_uncertainty(input_data, model_artifacts, feature_list):
     Yeni pipeline mantığı ile uncertainty hesaplama - Notebook'tan
     Formula: x_f = z * (h / (js_f + EPS))
     Hem eski hem yeni artifact yapılarını destekler.
+    feature_list zaten ALL_FEATURES ile filtrelenmiş olmalı.
     """
     x_new_vec = np.zeros(len(feature_list))
     for i, feature in enumerate(feature_list):
@@ -260,34 +268,144 @@ def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
     new_position = np.mean(neighbor_coords_2d, axis=0)
     return new_position[0], new_position[1]
 
-# --- PLOT/GRAFİK FONKSİYONLARI (ÇEVİRİLİ) ---
+# --- PLOT/GRAFİK FONKSİYONLARI (NOTEBOOK'TAN KDE BULUTLU GÖRÜNTÜ) ---
 
-def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=None):
+def plot_diagnostic_landscape(X_emb_train, y_train, new_patient_coords=None):
     """
-    2-sınıflı (G1 vs G2) t-SNE grafiğini çizer.
+    Notebook'taki gibi KDE tabanlı bulutlu görüntü çizer.
     'new_patient_coords' opsiyoneldir. Eğer verilmezse, sadece "bulut" çizilir.
     """
-    df_emb = pd.DataFrame({"x": X_emb_train[:, 0], "y": X_emb_train[:, 1], "label": y_train})
-    fig = go.Figure()
+    labels = y_train
     
-    # Grup 1 (Miyokardit) - Blue
-    df_1 = df_emb[df_emb['label'] == G1]
-    fig.add_trace(go.Scatter(x=df_1['x'], y=df_1['y'], mode='markers', marker=dict(color=COLOR_BLUE, size=5, opacity=0.6), name=T("legend_g1")))
+    # Padding around extreme points so contours don't touch the frame
+    pad = 2.0
     
-    # Grup 2 (AKS-KONTROL) - Orange
-    df_2 = df_emb[df_emb['label'] == G2]
-    fig.add_trace(go.Scatter(x=df_2['x'], y=df_2['y'], mode='markers', marker=dict(color=COLOR_ORANGE, size=5, opacity=0.6), name=T("legend_g2")))
+    xmin, xmax = X_emb_train[:, 0].min() - pad, X_emb_train[:, 0].max() + pad
+    ymin, ymax = X_emb_train[:, 1].min() - pad, X_emb_train[:, 1].max() + pad
     
-    # Sadece 'new_patient_coords' varsa kırmızı yıldızı çiz
+    # Grid resolution (notebook'ta 1000, ama performans için 250 kullanabiliriz)
+    resolution = 250
+    xs = np.linspace(xmin, xmax, resolution)
+    ys = np.linspace(ymin, ymax, resolution)
+    xx, yy = np.meshgrid(xs, ys)
+    grid = np.vstack([xx.ravel(), yy.ravel()])
+    
+    # KDE for each class
+    class1 = X_emb_train[labels == G1]
+    class2 = X_emb_train[labels == G2]
+    
+    kde1 = gaussian_kde(class1.T, bw_method="scott")
+    kde2 = gaussian_kde(class2.T, bw_method="scott")
+    
+    z1 = kde1(grid).reshape(xx.shape)
+    z2 = kde2(grid).reshape(xx.shape)
+    
+    # Quantile levels (notebook'ta q=0.6)
+    q = 0.6
+    level1 = np.quantile(z1, q)
+    level2 = np.quantile(z2, q)
+    
+    overlap = (z1 >= level1) & (z2 >= level2)
+    
+    # Normalize function
+    def normalise(z, clip=0.98):
+        """Scale density field to 0–1, clipping the top `clip` quantile."""
+        zmax = np.quantile(z, clip)
+        return np.clip(z / zmax, 0, 1)
+    
+    # Alpha masks for pure class regions
+    alpha1 = normalise(z1)**0.5
+    alpha2 = normalise(z2)**0.5
+    alpha1[z1 < level1] = 0.0
+    alpha2[z2 < level2] = 0.0
+    
+    # Identify the overlap and give it its own alpha map
+    overlap_mask = (alpha1 > 0) & (alpha2 > 0)
+    alpha_overlap = np.maximum(alpha1, alpha2)
+    alpha_overlap[~overlap_mask] = 0.0
+    
+    # Remove the red/blue alphas inside the overlap
+    alpha1[overlap_mask] = 0.0
+    alpha2[overlap_mask] = 0.0
+    
+    # Per-pixel colour for the overlap
+    eps_overlap = 1e-12
+    total = z1 + z2 + eps_overlap
+    t = (z1 - z2) / total  # -1 → pure blue side, +1 → pure red side
+    
+    shift_strength = 0.3
+    
+    # Base: all grey
+    R = np.full_like(t, 0.5)
+    G = np.full_like(t, 0.5)
+    B = np.full_like(t, 0.5)
+    
+    # Shift toward red where t > 0
+    pos = t > 0
+    R[pos] += shift_strength * t[pos]
+    G[pos] -= shift_strength * t[pos]
+    B[pos] -= shift_strength * t[pos]
+    
+    # Shift toward blue where t < 0
+    neg = t < 0
+    B[neg] += shift_strength * (-t[neg])
+    R[neg] -= shift_strength * (-t[neg])
+    G[neg] -= shift_strength * (-t[neg])
+    
+    # Build RGBA images
+    shape = (*alpha1.shape, 4)
+    
+    red_img = np.zeros(shape)
+    red_img[..., 0] = 1.0  # R channel (red for Myocarditis - Group 1)
+    red_img[..., 3] = alpha1  # alpha
+    
+    blue_img = np.zeros(shape)
+    blue_img[..., 2] = 1.0  # B channel (blue for ACS - Group 2)
+    blue_img[..., 3] = alpha2  # alpha
+    
+    # Build the RGBA image for the overlap
+    shape_over = (*alpha_overlap.shape, 4)
+    over_img = np.zeros(shape_over)
+    over_img[..., 0] = R
+    over_img[..., 1] = G
+    over_img[..., 2] = B
+    over_img[..., 3] = alpha_overlap
+    
+    # Create matplotlib figure
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    # Filled RGBA layers (notebook'taki gibi)
+    for img in [over_img, red_img, blue_img]:
+        ax.imshow(img, extent=(xmin, xmax, ymin, ymax), origin="lower", interpolation="bilinear")
+    
+    # Hide axes (notebook'taki gibi)
+    ax.set_axis_off()
+    
+    # Add legend
+    from matplotlib.patches import Patch
+    legend_handles = [
+        Patch(facecolor="red", edgecolor="red", label=T("legend_g1")),
+        Patch(facecolor="blue", edgecolor="blue", label=T("legend_g2")),
+        Patch(facecolor="gray", edgecolor="gray", label=T("legend_uncertain"))
+    ]
+    ax.legend(handles=legend_handles, loc="upper right", frameon=False)
+    
+    # Add new patient if provided
     if new_patient_coords is not None:
-        fig.add_trace(go.Scatter(
-            x=[new_patient_coords[0]], y=[new_patient_coords[1]],
-            mode='markers',
-            marker=dict(color=COLOR_NEW_PATIENT, size=16, symbol='star', line=dict(color='Black', width=2)),
-            name=T("legend_new")
-        ))
+        ax.scatter(new_patient_coords[0], new_patient_coords[1], 
+                  c=COLOR_NEW_PATIENT, s=200, marker='*', 
+                  edgecolors='black', linewidths=2, 
+                  zorder=10, label=T("legend_new"))
+        # Update legend
+        legend_handles.append(
+            plt.Line2D([0], [0], marker='*', color='w', 
+                      markerfacecolor=COLOR_NEW_PATIENT, markersize=15,
+                      markeredgecolor='black', markeredgewidth=2, label=T("legend_new"))
+        )
+        ax.legend(handles=legend_handles, loc="upper right", frameon=False)
     
-    fig.update_layout(title=T("plot_title_tsne"), xaxis_title="t-SNE Dimension 1", yaxis_title="t-SNE Dimension 2", plot_bgcolor=COLOR_BACKGROUND, paper_bgcolor=COLOR_BACKGROUND, font_color=COLOR_TEXT, legend_title_text=T("legend_title"))
+    plt.tight_layout()
+    
     return fig
 
 def plot_uncertainty_vector(x_new_vec_df, lang):
@@ -324,14 +442,17 @@ categorical_map = {
     "Çarpıntı": yes_no_map, "Recent Infection(4 hafta)": yes_no_map,
 }
 
-# NOTEBOOK'TAN GELEN GERÇEK FEATURE LİSTESİ (42 feature):
-# ['AGE', 'SEX', 'DM', 'HT', 'HL', 'FH', 'SIGARA', 'KBY', 'PRIOR_KAH', 'KOAH', 
-#  'Chest Pain', 'Chest Pain Character', 'Any Previous Pain Attacks', 'Chest Pain Duration(saat)', 
-#  'Radiation', 'Arm Pain', 'Back Pain', 'Epigastric Pain', 'Relation with exercise', 
-#  'Relation with Position', 'Dyspnea', 'Fatigue', 'Nausea', 'Çarpıntı', 'Recent Infection(4 hafta)', 
-#  'PEAK_TROP', 'CK-MB', 'GLUKOZ', 'WBCpik', 'NEUpik', 'LYMPpik', 'EOSpik', 'MONOpik', 
-#  'HB', 'HTC', 'PLT', 'KREATIN', 'AST', 'ALT', 'TOTAL_KOLESTEROL', 'TG', 'LDL', 'HDL']
+# KULLANILAN FEATURE LİSTESİ (42 feature - SADECE BUNLAR):
+ALL_FEATURES = [
+    'AGE', 'SEX', 'DM', 'HT', 'HL', 'FH', 'SIGARA', 'KBY', 'PRIOR_KAH', 'KOAH',
+    'Chest Pain', 'Chest Pain Character', 'Any Previous Pain Attacks', 'Chest Pain Duration(saat)',
+    'Radiation', 'Arm Pain', 'Back Pain', 'Epigastric Pain', 'Relation with exercise',
+    'Relation with Position', 'Dyspnea', 'Fatigue', 'Nausea', 'Çarpıntı', 'Recent Infection(4 hafta)',
+    'PEAK_TROP', 'CK-MB', 'GLUKOZ', 'WBCpik', 'NEUpik', 'LYMPpik', 'EOSpik', 'MONOpik',
+    'HB', 'HTC', 'PLT', 'KREATIN', 'AST', 'ALT', 'TOTAL_KOLESTEROL', 'TG', 'LDL', 'HDL'
+]
 
+# UI için kategorilere ayırma (sadece yukarıdaki feature'lar kullanılacak)
 KEY_FEATURES = [
     "AGE", "SEX", "Chest Pain Character", "PEAK_TROP"
 ]
@@ -387,7 +508,7 @@ st.set_page_config(
     page_title=LANG_STRINGS["app_title"]["ENG"],
     layout="wide",
     initial_sidebar_state="collapsed",
-    page_icon="🏥"
+    page_icon=None
 )
 
 # --- CUSTOM CSS FOR BETTER UI ---
@@ -492,12 +613,12 @@ if artifacts is not None:
     col_title, col_lang = st.columns([4, 1])
     
     with col_title:
-        st.title("🏥 " + T("main_title"))
+        st.title(T("main_title"))
     
     with col_lang:
         st.markdown("<br>", unsafe_allow_html=True)  # Vertical spacing
         new_lang = st.radio(
-            "🌐 Language / Dil",
+            "Language / Dil",
             options=['TR', 'ENG'],
             index=0 if lang == 'TR' else 1,
             key="language",
@@ -512,43 +633,48 @@ if artifacts is not None:
 
     # --- SÜTUN 1: Veri Girişi ---
     with col1:
-        st.header("📝 " + T("header_input"))
-        st.info("💡 " + T("info_note"))
+        st.header(T("header_input"))
+        st.info(T("info_note"))
         
         with st.form("patient_form", clear_on_submit=False):
             patient_data = {}
             processed_features = set()
+            
+            # Sadece ALL_FEATURES listesindeki feature'ları kullan
+            # feature_list'ten gelen feature'ları ALL_FEATURES ile filtrele
+            valid_features = [f for f in feature_list if f in ALL_FEATURES]
 
-            with st.expander("🔑 " + T("key_features"), expanded=True): 
+            with st.expander(T("key_features"), expanded=True): 
                 for feature in KEY_FEATURES:
-                    if feature in feature_list:
+                    if feature in valid_features:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
-            with st.expander("🩺 " + T("symptoms"), expanded=False):
+            with st.expander(T("symptoms"), expanded=False):
                 for feature in SYMPTOM_FEATURES:
-                    if feature in feature_list:
+                    if feature in valid_features:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
-            with st.expander("📋 " + T("history"), expanded=False):
+            with st.expander(T("history"), expanded=False):
                 for feature in HISTORY_FEATURES:
-                    if feature in feature_list:
+                    if feature in valid_features:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
-            with st.expander("🧪 " + T("labs"), expanded=False):
+            with st.expander(T("labs"), expanded=False):
                 for feature in LAB_FEATURES:
-                    if feature in feature_list:
+                    if feature in valid_features:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
             
-            other_features = [f for f in feature_list if f not in processed_features]
+            # Diğer feature'lar (sadece ALL_FEATURES içindekiler)
+            other_features = [f for f in valid_features if f not in processed_features]
             if other_features:
-                with st.expander("📊 " + T("other_features"), expanded=False):
+                with st.expander(T("other_features"), expanded=False):
                     for feature in other_features:
                         render_feature_widget(feature, patient_data)
             
             st.markdown("<br>", unsafe_allow_html=True)  # Spacing before button
             submit_button = st.form_submit_button(
-                "🚀 " + T("calculate_button"),
+                T("calculate_button"),
                 type="primary",
                 use_container_width=True
             )
@@ -569,8 +695,8 @@ if artifacts is not None:
             
             # 2. Durum: Az eksik -> DOLDUR VE UYAR
             elif num_missing > 0:
-                st.header("📊 " + T("header_output"))
-                st.warning("⚠️ " + T("warn_imputed").format(num_missing=num_missing))
+                st.header(T("header_output"))
+                st.warning(T("warn_imputed").format(num_missing=num_missing))
                 imputed_features_list = []
                 imputed_patient_data = patient_data.copy()
                 
@@ -593,12 +719,12 @@ if artifacts is not None:
                     x_new_std = scaler.transform(x_new_vec_imputed)
                     new_coords_xy = find_tsne_position(x_new_std, embedding_data['X_std'], embedding_data['X_emb'], k=5)
 
-                    st.subheader("🗺️ " + T("plot_title_tsne"))
+                    st.subheader(T("plot_title_tsne"))
                     # 'new_patient_coords' parametresini gönderiyoruz
-                    fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
-                    st.plotly_chart(fig_tsne, use_container_width=True)
+                    fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], new_patient_coords=new_coords_xy)
+                    st.pyplot(fig_tsne)
                     
-                    st.subheader("📈 " + T("plot_title_bar"))
+                    st.subheader(T("plot_title_bar"))
                     x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
                     st.markdown("**" + T("plot_top20") + "**")
                     fig_bar = plot_uncertainty_vector(x_new_vec_df, lang)
@@ -606,8 +732,8 @@ if artifacts is not None:
 
             # 3. Durum: Eksik yok -> HESAPLA
             else: 
-                st.header("📊 " + T("header_output"))
-                st.success("✅ " + T("success_all_data"))
+                st.header(T("header_output"))
+                st.success(T("success_all_data"))
                 
                 # Tam Veri ile Hesapla
                 x_new_vec_raw = predict_patient_uncertainty(patient_data, model_artifacts, feature_list)
@@ -615,12 +741,12 @@ if artifacts is not None:
                 x_new_std = scaler.transform(x_new_vec_imputed)
                 new_coords_xy = find_tsne_position(x_new_std, embedding_data['X_std'], embedding_data['X_emb'], k=5)
 
-                st.subheader("🗺️ " + T("plot_title_tsne"))
+                st.subheader(T("plot_title_tsne"))
                 # 'new_patient_coords' parametresini gönderiyoruz
-                fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
-                st.plotly_chart(fig_tsne, use_container_width=True)
+                fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], new_patient_coords=new_coords_xy)
+                st.pyplot(fig_tsne)
                 
-                st.subheader("📈 " + T("plot_title_bar"))
+                st.subheader(T("plot_title_bar"))
                 x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
                 st.markdown("**" + T("plot_top20") + "**")
                 fig_bar = plot_uncertainty_vector(x_new_vec_df, lang)
@@ -630,20 +756,19 @@ if artifacts is not None:
             # --- Karşılama Ekranı "Bulut"u gösterir ---
             
             # 1. ÖNCE "BULUT"U GÖSTER
-            st.subheader("🗺️ " + T("plot_title_tsne"))
+            st.subheader(T("plot_title_tsne"))
             fig_tsne_initial = plot_diagnostic_landscape(
                 embedding_data['X_emb'], 
-                embedding_data['y'],
-                lang
+                embedding_data['y']
                 # new_patient_coords gönderilmiyor (None olacak)
             )
-            st.plotly_chart(fig_tsne_initial, use_container_width=True)
+            st.pyplot(fig_tsne_initial)
             
             st.divider() # Grafik ve açıklama arasına çizgi
             
             # 2. SONRA "ARAÇ HAKKINDA" BİLGİSİNİ GÖSTER
-            st.header("ℹ️ " + T("welcome_header"))
-            st.info("💡 " + T("welcome_info"))
+            st.header(T("welcome_header"))
+            st.info(T("welcome_info"))
             st.markdown(T("welcome_text"), unsafe_allow_html=True)
 else:
     # Artifact'lar yüklenemezse

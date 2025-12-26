@@ -217,13 +217,27 @@ if __name__ == "__main__":
     # Final feature list - sadece numeric kolonlar
     num_cols = df_clean.select_dtypes(include=["int", "float"]).columns.tolist()
     num_cols = [f for f in num_cols if f != LABEL_COL]
+    
+    # SADECE KULLANILAN 42 FEATURE'I KULLAN
+    ALL_FEATURES = [
+        'AGE', 'SEX', 'DM', 'HT', 'HL', 'FH', 'SIGARA', 'KBY', 'PRIOR_KAH', 'KOAH',
+        'Chest Pain', 'Chest Pain Character', 'Any Previous Pain Attacks', 'Chest Pain Duration(saat)',
+        'Radiation', 'Arm Pain', 'Back Pain', 'Epigastric Pain', 'Relation with exercise',
+        'Relation with Position', 'Dyspnea', 'Fatigue', 'Nausea', 'Çarpıntı', 'Recent Infection(4 hafta)',
+        'PEAK_TROP', 'CK-MB', 'GLUKOZ', 'WBCpik', 'NEUpik', 'LYMPpik', 'EOSpik', 'MONOpik',
+        'HB', 'HTC', 'PLT', 'KREATIN', 'AST', 'ALT', 'TOTAL_KOLESTEROL', 'TG', 'LDL', 'HDL'
+    ]
+    
+    # Sadece bu feature'ları kullan
+    num_cols = [f for f in num_cols if f in ALL_FEATURES]
 
     cat_cols = []
     y_labels = df_clean[LABEL_COL].values  # y_labels are now 1s and 2s
 
     print(f"Data loaded. Using '{LABEL_COL}' as target.")
-    print(f"Found {len(df_clean)} patients and {len(num_cols)} features.")
+    print(f"Found {len(df_clean)} patients and {len(num_cols)} features (filtered to use only the 42 specified features).")
     print(f"Target distribution:\n{df_clean[LABEL_COL].value_counts()}")
+    print(f"Using features: {num_cols}")
 
     # --- 2. Run Pipeline & Get Artifacts ---
     print("Calculating NEW 2-Class Uncertainty matrix...")
