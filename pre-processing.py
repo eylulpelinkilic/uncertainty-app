@@ -284,35 +284,16 @@ if __name__ == "__main__":
              y=y_labels)  # y will contain 1s and 2s
     print(f"3. Embedding data saved to -> {path3}")
 
-    # --- 6. Calculate and Save Imputation Values ---
-    print("Calculating imputation default values...")
-    imputation_values = {}
-
-    # This categorical map must match the one in app.py (NOTEBOOK FEATURES ONLY)
-    yes_no_map = {"No": 0, "Yes": 1}
-    categorical_map = {
-        "SEX": {"Female": 0, "Male": 1},  # GENDER değil, SEX
-        "Chest Pain Character": {"None": 0, "Stabbing / Localized": 1, "Pressure / Anginal": 2},
-        "DM": yes_no_map, "HT": yes_no_map, "HL": yes_no_map, "FH": yes_no_map,
-        "SIGARA": yes_no_map, "KBY": yes_no_map, "PRIOR_KAH": yes_no_map,  # PRIOR_CAD değil
-        "KOAH": yes_no_map, "Chest Pain": yes_no_map, "Radiation": yes_no_map,
-        "Arm Pain": yes_no_map, "Back Pain": yes_no_map, "Epigastric Pain": yes_no_map,
-        "Relation with exercise": yes_no_map, "Relation with Position": yes_no_map,
-        "Dyspnea": yes_no_map, "Fatigue": yes_no_map, "Nausea": yes_no_map,
-        "Çarpıntı": yes_no_map, "Recent Infection(4 hafta)": yes_no_map,
-    }
-
-    for feature in num_cols:
-        if feature in categorical_map:
-            imputation_values[feature] = df[feature].mode()[0]
-        else:
-            imputation_values[feature] = df[feature].mean()
-
-    path4 = os.path.join(output_dir, "imputation_values.pkl")
-    with open(path4, "wb") as f:
-        pickle.dump(imputation_values, f)
-
-    print(f"4. Imputation values saved to -> {path4}")
+    # --- 3.5. Save t-SNE Model ---
+    path_tsne = os.path.join(output_dir, "tsne_model.pkl")
+    with open(path_tsne, "wb") as f:
+        pickle.dump(tsne, f)
+    print(f"3.5. t-SNE model saved to -> {path_tsne}")
 
     print(f"\n--- PRE-PROCESSING COMPLETE (2-CLASS MODEL) ---")
-    print(f"All 4 artifacts are saved in the '{output_dir}' directory.")
+    print(f"All artifacts are saved in the '{output_dir}' directory.")
+    print(f"Saved artifacts:")
+    print(f"  1. Model artifacts: {path1}")
+    print(f"  2. Scaler: {path2}")
+    print(f"  3. Embedding data: {path3}")
+    print(f"  4. t-SNE model: {path_tsne}")
