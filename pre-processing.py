@@ -4,7 +4,7 @@ import pickle
 import os
 import warnings
 from sklearn.preprocessing import StandardScaler
-from sklearn.manifold import TSNE
+from openTSNE import TSNE  # openTSNE kullan (transform metodu için)
 from scipy.stats import gaussian_kde
 from sklearn.exceptions import ConvergenceWarning
 
@@ -256,11 +256,11 @@ if __name__ == "__main__":
     X_std = scaler.fit_transform(X_imputed)
     print("StandardScaler fitted.")
 
-    # --- 4. t-SNE Calculation (NOTEBOOK PARAMETRELERİ) ---
+    # --- 4. t-SNE Calculation (NEW_case_study PARAMETRELERİ) ---
     print("Calculating NEW 2-Class t-SNE coordinates...")
-    tsne = TSNE(n_components=2, perplexity=50, learning_rate='auto',
-                init='pca', random_state=42)
-    X_embedding = tsne.fit_transform(X_std)
+    tsne = TSNE(n_components=2, perplexity=50, early_exaggeration=12.0,
+                learning_rate='auto', initialization='pca', random_state=42)
+    X_embedding = tsne.fit(X_std)  # openTSNE'de fit döner, transform için kullanılabilir
     print("t-SNE coordinates calculated.")
 
     # --- 5. Save Core Artifacts ---
