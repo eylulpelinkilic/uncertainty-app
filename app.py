@@ -47,7 +47,7 @@ LANG_STRINGS = {
     "key_features": {"ENG": "Key Features", "TR": "Anahtar Özellikler"},
     "symptoms": {"ENG": "Symptoms & Presentation", "TR": "Semptomlar ve Başvuru"},
     "history": {"ENG": "Patient History & Comorbidities", "TR": "Hasta Geçmişi ve Komorbiditeler"},
-    "labs": {"ENG": "Lab, ECG, & Imaging Results", "TR": "Laboratuvar, EKG ve Görüntüleme Sonuçları"},
+    "labs": {"ENG": "Laboratory Results", "TR": "Laboratuvar Sonuçları"},
     "other_features": {"ENG": "Other Features", "TR": "Diğer Özellikler"},
     "calculate_button": {"ENG": "Calculate Patient Position", "TR": "Hasta Pozisyonunu Hesapla"},
     "header_output": {"ENG": "Patient Position Analysis", "TR": "Hasta Pozisyon Analizi"},
@@ -307,53 +307,51 @@ def plot_uncertainty_vector(x_new_vec_df, lang):
     )
     return fig
 
-# --- KATEGORİK & GRUP HARİTALARI ---
+# --- KATEGORİK & GRUP HARİTALARI (NOTEBOOK'TAN GELEN GERÇEK FEATURE'LARA GÖRE) ---
+# Notebook'ta sadece B..Z (1:26) ve AD..AU (29:47) kolonları seçiliyor
+# EKG sonuçları, MRI sonuçları ve bazı lab değerleri KULLANILMIYOR
+
 yes_no_map = {"No": 0, "Yes": 1}
 categorical_map = {
-    "GENDER": {"Female": 0, "Male": 1},
-    "Socioeconomic Status": {"Poor": 0, "Good": 1},
+    "SEX": {"Female": 0, "Male": 1},  # GENDER değil, SEX kullanılıyor
     "Chest Pain Character": {"None": 0, "Stabbing / Localized": 1, "Pressure / Anginal": 2},
-    "Infection type": {"URTI": 1, "Diarrhea": 2, "Vaccine": 3, "Other": 4},
     "DM": yes_no_map, "HT": yes_no_map, "HL": yes_no_map, "FH": yes_no_map,
-    "SIGARA": yes_no_map, "KBY": yes_no_map, "PRIOR_CAD": yes_no_map,
-    "HIPOTIROIDI": yes_no_map, "Chest Pain": yes_no_map, "Radiation": yes_no_map,
+    "SIGARA": yes_no_map, "KBY": yes_no_map, "PRIOR_KAH": yes_no_map,  # PRIOR_CAD değil, PRIOR_KAH
+    "KOAH": yes_no_map, "Chest Pain": yes_no_map, "Radiation": yes_no_map,
     "Arm Pain": yes_no_map, "Back Pain": yes_no_map, "Epigastric Pain": yes_no_map,
     "Relation with exercise": yes_no_map, "Relation with Position": yes_no_map,
     "Dyspnea": yes_no_map, "Fatigue": yes_no_map, "Nausea": yes_no_map,
     "Çarpıntı": yes_no_map, "Recent Infection(4 hafta)": yes_no_map,
-    "INHOSPITAL_EX": yes_no_map, "Segmentary Wall Motion Abnormality": yes_no_map,
-    "Pericardial Effusion": yes_no_map, "ECG_ST depression": yes_no_map,
-    "ECG_T neg": yes_no_map, "ECG_Q waves": yes_no_map, "MRI_T2": yes_no_map,
-    "MRI_LGE": yes_no_map, "KANSER_KEMOTERAPI": yes_no_map,
-    "TASI_BRADIKARDI": yes_no_map, "MADDE_ILAC_KULLANIMI": yes_no_map,
-    "Alcohol": yes_no_map, "KOAH": yes_no_map, "PAH": yes_no_map,
-    "HIPERTIROIDI": yes_no_map, "REYNAULD": yes_no_map,
 }
+
+# NOTEBOOK'TAN GELEN GERÇEK FEATURE LİSTESİ (42 feature):
+# ['AGE', 'SEX', 'DM', 'HT', 'HL', 'FH', 'SIGARA', 'KBY', 'PRIOR_KAH', 'KOAH', 
+#  'Chest Pain', 'Chest Pain Character', 'Any Previous Pain Attacks', 'Chest Pain Duration(saat)', 
+#  'Radiation', 'Arm Pain', 'Back Pain', 'Epigastric Pain', 'Relation with exercise', 
+#  'Relation with Position', 'Dyspnea', 'Fatigue', 'Nausea', 'Çarpıntı', 'Recent Infection(4 hafta)', 
+#  'PEAK_TROP', 'CK-MB', 'GLUKOZ', 'WBCpik', 'NEUpik', 'LYMPpik', 'EOSpik', 'MONOpik', 
+#  'HB', 'HTC', 'PLT', 'KREATIN', 'AST', 'ALT', 'TOTAL_KOLESTEROL', 'TG', 'LDL', 'HDL']
+
 KEY_FEATURES = [
-    "AGE", "GENDER", "Chest Pain Character", "PEAK_TROP", 
-    "Segmentary Wall Motion Abnormality", "MRI_LGE"
+    "AGE", "SEX", "Chest Pain Character", "PEAK_TROP"
 ]
+
 SYMPTOM_FEATURES = [
     "Chest Pain", "Chest Pain Duration(saat)", "Radiation", "Arm Pain",
     "Back Pain", "Epigastric Pain", "Relation with exercise", 
     "Relation with Position", "Dyspnea", "Fatigue", "Nausea", "Çarpıntı",
     "Any Previous Pain Attacks"
 ]
+
 HISTORY_FEATURES = [
-    "DM", "HT", "HL", "FH", "SIGARA", "KBY", "PRIOR_CAD", "HIPOTIROIDI",
-    "Socioeconomic Status", "Recent Infection(4 hafta)", "Infection type",
-    "KANSER_KEMOTERAPI", "TASI_BRADIKARDI", "MADDE_ILAC_KULLANIMI",
-    "Alcohol", "KOAH", "PAH", "HIPERTIROIDI", "REYNAULD"
+    "DM", "HT", "HL", "FH", "SIGARA", "KBY", "PRIOR_KAH", "KOAH",
+    "Recent Infection(4 hafta)"
 ]
-LAB_ECG_FEATURES = [
-    "Troponin_Sonucu", "TROPONIN_CUTOFF_DEGERI", "TROP_KATSAYISI", "CK-MB",
-    "GLUKOZ", "WBCpik", "NEUpik", "LYMPpik", "EOSpik", "MONOpik", "HB",
-    "HTC", "PLT", "KREATIN", "AST", "ALT", "ALBUMIN", "TOTAL_KOLESTEROL",
-    "TG", "LDL", "HDL", "hs-CRP", "hs-CRP_CUTOFF", "hs-CRP_FOLD",
-    "Sedimantation", "BNP", "HBAB1C", "D-DIMER", "EF", "Pericardial Effusion",
-    "ECG_ST depression", "ECG_Location of ST depression ", "Level of ST-Dep_mm",
-    "ECG_T neg", "ECG_Location of T negativity", "Level of T invertion_mm",
-    "ECG_Q waves", "MRI_T2", "INHOSPITAL_EX", "EX_TARIHI", "BMI"
+
+LAB_FEATURES = [
+    "CK-MB", "GLUKOZ", "WBCpik", "NEUpik", "LYMPpik", "EOSpik", "MONOpik", 
+    "HB", "HTC", "PLT", "KREATIN", "AST", "ALT", 
+    "TOTAL_KOLESTEROL", "TG", "LDL", "HDL"
 ]
 
 # --- ANINDA DOĞRULAMA YAPAN WIDGET FONKSİYONU ---
@@ -537,7 +535,7 @@ if artifacts is not None:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
             with st.expander("🧪 " + T("labs"), expanded=False):
-                for feature in LAB_ECG_FEATURES:
+                for feature in LAB_FEATURES:
                     if feature in feature_list:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
