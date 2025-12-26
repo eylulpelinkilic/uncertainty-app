@@ -23,7 +23,7 @@ IMPUTATION_PATH = os.path.join(ARTIFACT_DIR, "imputation_values.pkl")
 
 # --- MODEL SABİTLERİ ---
 G1, G2 = 1, 2 # Sadece iki grubumuz var
-EPS = 1e-6 
+EPS = 1e-12  # Notebook ile uyumlu (EPS_NB ile aynı)
 IMPUTATION_THRESHOLD = 5 # En fazla izin verilen eksik alan sayısı
 
 # --- DİL (ÇEVİRİ) SÖZLÜĞÜ (GÜNCELLENDİ) ---
@@ -123,22 +123,60 @@ def T(key):
     lang = st.session_state.language
     return LANG_STRINGS.get(key, {}).get(lang, f"MISSING_KEY: {key}")
 
-# --- YARDIMCI FONKSİYONLAR ---
-def entropy(p, base=2):
-    p = np.clip(p, 0, 1); p = p / p.sum(); nz = p > 0
-    logp = np.log(p[nz]) / np.log(base)
-    return -np.sum(p[nz] * logp)
+# --- YARDIMCI FONKSİYONLAR (NEW PIPELINE FROM NOTEBOOK) ---
+EPS_NB = 1e-12  # Notebook'taki EPS değeri
+N_BINS = 20     # Notebook'taki N_BINS değeri
+
+def kl_divergence(p, q, eps=EPS_NB):
+    """
+    D_KL(p || q) - Notebook'tan
+    """
+    union_idx = p.index.union(q.index)
+    p, q = p.reindex(union_idx, fill_value=0), q.reindex(union_idx, fill_value=0)
+    return float(np.sum(p * np.log2((p + eps) / (q + eps))))
+
+def get_distribution(series):
+    """PMF of a feature - Notebook'tan"""
+    return series.value_counts(normalize=True)
+
+def discretise(series):
+    """Discretize feature if needed - Notebook'tan"""
+    if series.nunique() > N_BINS * 2:
+        return pd.qcut(series, q=N_BINS, duplicates="drop")
+    return series
+
+def shannon_entropy(p, eps=EPS_NB):
+    """H(p) (base-2) - Notebook'tan. `p` is a pandas Series whose values sum to 1."""
+    return float(-np.sum(p * np.log2(p + eps)))
+
+def js_divergence(p, q, eps=EPS_NB):
+    """
+    Jensen-Shannon divergence - Notebook'tan
+    Symmetric, bounded in [0, 1] when log base is 2.
+    """
+    union = p.index.union(q.index)
+    p, q = p.reindex(union, fill_value=0), q.reindex(union, fill_value=0)
+    m = 0.5 * (p + q)
+    kl_p_m = np.sum(p * np.log2((p + eps) / (m + eps)))
+    kl_q_m = np.sum(q * np.log2((q + eps) / (m + eps)))
+    return 0.5 * (kl_p_m + kl_q_m)
 
 def assign_nearest_class_and_z(xp, stats):
+    """Z-score hesaplama - Notebook mantığı ile uyumlu"""
     best_c, best_absz, best_z = None, np.inf, None
-    for c, (mu, sd) in stats.items():
-        if sd is None or np.isnan(sd) or sd == 0 or np.isnan(mu): continue
+    for c, stat_dict in stats.items():
+        if isinstance(stat_dict, dict):
+            mu = stat_dict.get("mu")
+            sd = stat_dict.get("std")
+        else:
+            # Eski format: (mu, sd) tuple
+            mu, sd = stat_dict
+        if sd is None or np.isnan(sd) or sd == 0 or np.isnan(mu): 
+            continue
         z = (xp - mu) / sd
-        if abs(z) < best_absz: best_absz, best_z, best_c = abs(z), z, c
+        if abs(z) < best_absz: 
+            best_absz, best_z, best_c = abs(z), z, c
     return best_c, best_z
-
-def H_of_class_probvec(p_vec):
-    return entropy(p_vec, base=2)
 
 # --- ARTIFACT YÜKLEME ---
 @st.cache_resource(show_spinner="Loading model artifacts...")
@@ -158,17 +196,61 @@ def load_artifacts():
         st.error(f"Please RE-RUN `pre-processing.py` to generate all 4 artifacts.")
         return None
 
-# --- TAHMİNLEME FONKSİYONLARI ---
+# --- TAHMİNLEME FONKSİYONLARI (NEW PIPELINE FROM NOTEBOOK) ---
 def predict_patient_uncertainty(input_data, model_artifacts, feature_list):
+    """
+    Yeni pipeline mantığı ile uncertainty hesaplama - Notebook'tan
+    Formula: x_f = z * (h / (js_f + EPS))
+    Hem eski hem yeni artifact yapılarını destekler.
+    """
     x_new_vec = np.zeros(len(feature_list))
     for i, feature in enumerate(feature_list):
+        if feature not in model_artifacts:
+            x_new_vec[i] = np.nan
+            continue
+            
         artifacts = model_artifacts[feature]
-        xp = input_data[feature] 
+        xp = input_data[feature]
+        
+        # Z-score hesaplama (en yakın class'a göre)
+        if 'stats' not in artifacts:
+            x_new_vec[i] = np.nan
+            continue
+            
         c_star, zpf = assign_nearest_class_and_z(xp, artifacts['stats'])
-        if (c_star is None) or (zpf is None) or np.isnan(zpf): x_new_vec[i] = np.nan; continue
-        H_f = H_of_class_probvec(artifacts['class_probvec'][c_star])
-        S_f = artifacts['S_f']
-        x_new_vec[i] = (H_f * zpf) / (S_f + EPS)
+        if (c_star is None) or (zpf is None) or np.isnan(zpf): 
+            x_new_vec[i] = np.nan
+            continue
+        
+        # Entropy hesaplama - yeni pipeline'da direkt entropy var
+        h = None
+        if 'entropy' in artifacts and isinstance(artifacts['entropy'], dict):
+            # Yeni format: direkt entropy dict'i var
+            h = artifacts['entropy'].get(c_star)
+        elif 'class_probvec' in artifacts:
+            # Eski format: class_probvec'den entropy hesapla
+            if c_star in artifacts['class_probvec']:
+                p_vec = artifacts['class_probvec'][c_star]
+                if isinstance(p_vec, pd.Series):
+                    h = shannon_entropy(p_vec)
+                elif isinstance(p_vec, (list, np.ndarray)):
+                    # numpy array veya list ise Series'e çevir
+                    p_series = pd.Series(p_vec)
+                    h = shannon_entropy(p_series)
+        
+        if h is None or np.isnan(h):
+            x_new_vec[i] = np.nan
+            continue
+        
+        # JS divergence (S_f) - yeni pipeline'da 'js' veya 'S_f' olabilir
+        js_f = artifacts.get('js', artifacts.get('S_f', EPS_NB))
+        if js_f is None or np.isnan(js_f):
+            js_f = EPS_NB
+        js_f = max(js_f, EPS_NB)  # Never let it be 0
+        
+        # Yeni pipeline formülü: z * (h / (js_f + EPS))
+        x_new_vec[i] = zpf * (h / (js_f + EPS_NB))
+    
     return x_new_vec
 
 def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
@@ -305,8 +387,96 @@ def render_feature_widget(feature, data_dict):
 # --- ANA UYGULAMA MANTIĞI ---
 st.set_page_config(
     page_title=LANG_STRINGS["app_title"]["ENG"],
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed",
+    page_icon="🏥"
 )
+
+# --- CUSTOM CSS FOR BETTER UI ---
+st.markdown("""
+    <style>
+    /* Main container styling */
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    
+    /* Header styling */
+    h1 {
+        color: #2C3E50;
+        border-bottom: 3px solid #3498DB;
+        padding-bottom: 0.5rem;
+        margin-bottom: 1rem;
+    }
+    
+    /* Info boxes */
+    .stInfo {
+        background-color: #EBF5FB;
+        border-left: 4px solid #3498DB;
+        padding: 1rem;
+        border-radius: 5px;
+    }
+    
+    /* Warning boxes */
+    .stWarning {
+        background-color: #FEF9E7;
+        border-left: 4px solid #F39C12;
+        padding: 1rem;
+        border-radius: 5px;
+    }
+    
+    /* Success boxes */
+    .stSuccess {
+        background-color: #EAFAF1;
+        border-left: 4px solid #27AE60;
+        padding: 1rem;
+        border-radius: 5px;
+    }
+    
+    /* Error boxes */
+    .stError {
+        background-color: #FADBD8;
+        border-left: 4px solid #E74C3C;
+        padding: 1rem;
+        border-radius: 5px;
+    }
+    
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        font-weight: 600;
+        color: #2C3E50;
+    }
+    
+    /* Button styling */
+    .stButton > button {
+        width: 100%;
+        background-color: #3498DB;
+        color: white;
+        font-weight: 600;
+        border-radius: 5px;
+        padding: 0.5rem 1rem;
+        transition: all 0.3s;
+    }
+    
+    .stButton > button:hover {
+        background-color: #2980B9;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    
+    /* Metric cards */
+    [data-testid="stMetricValue"] {
+        font-size: 2rem;
+    }
+    
+    /* Divider styling */
+    hr {
+        margin: 2rem 0;
+        border: none;
+        border-top: 2px solid #ECF0F1;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # --- Dil Durumunu Başlat ---
 if 'language' not in st.session_state:
@@ -321,15 +491,21 @@ if artifacts is not None:
     model_artifacts, scaler, embedding_data, imputation_values, feature_list = artifacts
     
     # --- BASİT BAŞLIK VE DİL SEÇİMİ (APP BAR İPTAL EDİLDİ) ---
-    st.title(T("main_title"))
+    col_title, col_lang = st.columns([4, 1])
     
-    st.radio(
-        "Language / Dil",
-        options=['TR', 'ENG'], # DEĞİŞİKLİK: TR ilk sırada
-        index=0 if lang == 'TR' else 1, # DEĞİŞİKLİK: Varsayılan index 0 (TR)
-        key="language", # State'i günceller
-        horizontal=True,
-    )
+    with col_title:
+        st.title("🏥 " + T("main_title"))
+    
+    with col_lang:
+        st.markdown("<br>", unsafe_allow_html=True)  # Vertical spacing
+        new_lang = st.radio(
+            "🌐 Language / Dil",
+            options=['TR', 'ENG'],
+            index=0 if lang == 'TR' else 1,
+            key="language",
+            horizontal=True,
+            label_visibility="visible"
+        )
     
     st.divider() # Başlık ve içerik arasına ayırıcı çizgi
     
@@ -338,29 +514,29 @@ if artifacts is not None:
 
     # --- SÜTUN 1: Veri Girişi ---
     with col1:
-        st.header(T("header_input"))
-        st.info(T("info_note"))
+        st.header("📝 " + T("header_input"))
+        st.info("💡 " + T("info_note"))
         
-        with st.form("patient_form"):
+        with st.form("patient_form", clear_on_submit=False):
             patient_data = {}
             processed_features = set()
 
-            with st.expander(T("key_features"), expanded=False): 
+            with st.expander("🔑 " + T("key_features"), expanded=True): 
                 for feature in KEY_FEATURES:
                     if feature in feature_list:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
-            with st.expander(T("symptoms"), expanded=False):
+            with st.expander("🩺 " + T("symptoms"), expanded=False):
                 for feature in SYMPTOM_FEATURES:
                     if feature in feature_list:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
-            with st.expander(T("history"), expanded=False):
+            with st.expander("📋 " + T("history"), expanded=False):
                 for feature in HISTORY_FEATURES:
                     if feature in feature_list:
                         render_feature_widget(feature, patient_data)
                         processed_features.add(feature)
-            with st.expander(T("labs"), expanded=False):
+            with st.expander("🧪 " + T("labs"), expanded=False):
                 for feature in LAB_ECG_FEATURES:
                     if feature in feature_list:
                         render_feature_widget(feature, patient_data)
@@ -368,13 +544,15 @@ if artifacts is not None:
             
             other_features = [f for f in feature_list if f not in processed_features]
             if other_features:
-                with st.expander(T("other_features"), expanded=False):
+                with st.expander("📊 " + T("other_features"), expanded=False):
                     for feature in other_features:
                         render_feature_widget(feature, patient_data)
             
+            st.markdown("<br>", unsafe_allow_html=True)  # Spacing before button
             submit_button = st.form_submit_button(
-                T("calculate_button"),
-                type="primary"
+                "🚀 " + T("calculate_button"),
+                type="primary",
+                use_container_width=True
             )
 
     # --- SÜTUN 2: Çıktılar ve Karşılama Ekranı ---
@@ -393,8 +571,8 @@ if artifacts is not None:
             
             # 2. Durum: Az eksik -> DOLDUR VE UYAR
             elif num_missing > 0:
-                st.header(T("header_output"))
-                st.warning(T("warn_imputed").format(num_missing=num_missing))
+                st.header("📊 " + T("header_output"))
+                st.warning("⚠️ " + T("warn_imputed").format(num_missing=num_missing))
                 imputed_features_list = []
                 imputed_patient_data = patient_data.copy()
                 
@@ -417,21 +595,21 @@ if artifacts is not None:
                     x_new_std = scaler.transform(x_new_vec_imputed)
                     new_coords_xy = find_tsne_position(x_new_std, embedding_data['X_std'], embedding_data['X_emb'], k=5)
 
-                    st.subheader(T("plot_title_tsne"))
+                    st.subheader("🗺️ " + T("plot_title_tsne"))
                     # 'new_patient_coords' parametresini gönderiyoruz
                     fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
                     st.plotly_chart(fig_tsne, use_container_width=True)
                     
-                    st.subheader(T("plot_title_bar"))
+                    st.subheader("📈 " + T("plot_title_bar"))
                     x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
-                    st.write(T("plot_top20"))
+                    st.markdown("**" + T("plot_top20") + "**")
                     fig_bar = plot_uncertainty_vector(x_new_vec_df, lang)
                     st.plotly_chart(fig_bar, use_container_width=True)
 
             # 3. Durum: Eksik yok -> HESAPLA
             else: 
-                st.header(T("header_output"))
-                st.success(T("success_all_data"))
+                st.header("📊 " + T("header_output"))
+                st.success("✅ " + T("success_all_data"))
                 
                 # Tam Veri ile Hesapla
                 x_new_vec_raw = predict_patient_uncertainty(patient_data, model_artifacts, feature_list)
@@ -439,14 +617,14 @@ if artifacts is not None:
                 x_new_std = scaler.transform(x_new_vec_imputed)
                 new_coords_xy = find_tsne_position(x_new_std, embedding_data['X_std'], embedding_data['X_emb'], k=5)
 
-                st.subheader(T("plot_title_tsne"))
+                st.subheader("🗺️ " + T("plot_title_tsne"))
                 # 'new_patient_coords' parametresini gönderiyoruz
                 fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
                 st.plotly_chart(fig_tsne, use_container_width=True)
                 
-                st.subheader(T("plot_title_bar"))
+                st.subheader("📈 " + T("plot_title_bar"))
                 x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
-                st.write(T("plot_top20"))
+                st.markdown("**" + T("plot_top20") + "**")
                 fig_bar = plot_uncertainty_vector(x_new_vec_df, lang)
                 st.plotly_chart(fig_bar, use_container_width=True)
                 
@@ -454,7 +632,7 @@ if artifacts is not None:
             # --- Karşılama Ekranı "Bulut"u gösterir ---
             
             # 1. ÖNCE "BULUT"U GÖSTER
-            st.subheader(T("plot_title_tsne"))
+            st.subheader("🗺️ " + T("plot_title_tsne"))
             fig_tsne_initial = plot_diagnostic_landscape(
                 embedding_data['X_emb'], 
                 embedding_data['y'],
@@ -466,8 +644,8 @@ if artifacts is not None:
             st.divider() # Grafik ve açıklama arasına çizgi
             
             # 2. SONRA "ARAÇ HAKKINDA" BİLGİSİNİ GÖSTER
-            st.header(T("welcome_header"))
-            st.info(T("welcome_info"))
+            st.header("ℹ️ " + T("welcome_header"))
+            st.info("💡 " + T("welcome_info"))
             st.markdown(T("welcome_text"), unsafe_allow_html=True)
 else:
     # Artifact'lar yüklenemezse
