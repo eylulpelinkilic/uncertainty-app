@@ -6,6 +6,7 @@ import os
 import warnings
 import plotly.graph_objects as go
 from sklearn.neighbors import NearestNeighbors
+from scipy.stats import gaussian_kde
 
 # Suppress scikit-learn version warnings for unpickling
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
@@ -257,19 +258,87 @@ def predict_with_classifier(x_new_scaled, classifier):
 
 def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=None):
     """
-    2-sınıflı (G1 vs G2) t-SNE grafiğini çizer.
+    2-sınıflı (G1 vs G2) t-SNE grafiğini KDE (Kernel Density Estimation) ile çizer.
     'new_patient_coords' opsiyoneldir. Eğer verilmezse, sadece "bulut" çizilir.
     """
     df_emb = pd.DataFrame({"x": X_emb_train[:, 0], "y": X_emb_train[:, 1], "label": y_train})
     fig = go.Figure()
     
-    # Grup 1 (Miyokardit) - Blue
-    df_1 = df_emb[df_emb['label'] == G1]
-    fig.add_trace(go.Scatter(x=df_1['x'], y=df_1['y'], mode='markers', marker=dict(color=COLOR_BLUE, size=5, opacity=0.6), name=T("legend_g1")))
+    # KDE hesaplamaları için grid oluştur
+    pad = 2.0
+    xmin, xmax = X_emb_train[:, 0].min() - pad, X_emb_train[:, 0].max() + pad
+    ymin, ymax = X_emb_train[:, 1].min() - pad, X_emb_train[:, 1].max() + pad
     
-    # Grup 2 (AKS-KONTROL) - Orange
+    resolution = 100
+    xs = np.linspace(xmin, xmax, resolution)
+    ys = np.linspace(ymin, ymax, resolution)
+    xx, yy = np.meshgrid(xs, ys)
+    grid = np.vstack([xx.ravel(), yy.ravel()])
+    
+    # Her sınıf için KDE hesapla
+    class1 = X_emb_train[y_train == G1]
+    class2 = X_emb_train[y_train == G2]
+    
+    if len(class1) > 0:
+        kde1 = gaussian_kde(class1.T, bw_method="scott")
+        z1 = kde1(grid).reshape(xx.shape)
+        
+        # Grup 1 (Miyokardit) için contour plot
+        fig.add_trace(go.Contour(
+            x=xs, y=ys, z=z1,
+            colorscale=[[0, 'rgba(52, 152, 219, 0)'], [0.5, 'rgba(52, 152, 219, 0.3)'], [1, 'rgba(52, 152, 219, 0.6)']],
+            showscale=False,
+            contours=dict(
+                start=0,
+                end=np.quantile(z1, 0.95),
+                size=np.quantile(z1, 0.95) / 5,
+                coloring='fill'
+            ),
+            name=T("legend_g1"),
+            hoverinfo='skip'
+        ))
+    
+    if len(class2) > 0:
+        kde2 = gaussian_kde(class2.T, bw_method="scott")
+        z2 = kde2(grid).reshape(xx.shape)
+        
+        # Grup 2 (AKS-KONTROL) için contour plot
+        fig.add_trace(go.Contour(
+            x=xs, y=ys, z=z2,
+            colorscale=[[0, 'rgba(243, 156, 18, 0)'], [0.5, 'rgba(243, 156, 18, 0.3)'], [1, 'rgba(243, 156, 18, 0.6)']],
+            showscale=False,
+            contours=dict(
+                start=0,
+                end=np.quantile(z2, 0.95),
+                size=np.quantile(z2, 0.95) / 5,
+                coloring='fill'
+            ),
+            name=T("legend_g2"),
+            hoverinfo='skip'
+        ))
+    
+    # Scatter plot'lar (daha az opacity ile)
+    df_1 = df_emb[df_emb['label'] == G1]
+    if len(df_1) > 0:
+        fig.add_trace(go.Scatter(
+            x=df_1['x'], y=df_1['y'], 
+            mode='markers', 
+            marker=dict(color=COLOR_BLUE, size=4, opacity=0.4), 
+            name=T("legend_g1"),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
+    
     df_2 = df_emb[df_emb['label'] == G2]
-    fig.add_trace(go.Scatter(x=df_2['x'], y=df_2['y'], mode='markers', marker=dict(color=COLOR_ORANGE, size=5, opacity=0.6), name=T("legend_g2")))
+    if len(df_2) > 0:
+        fig.add_trace(go.Scatter(
+            x=df_2['x'], y=df_2['y'], 
+            mode='markers', 
+            marker=dict(color=COLOR_ORANGE, size=4, opacity=0.4), 
+            name=T("legend_g2"),
+            showlegend=False,
+            hoverinfo='skip'
+        ))
     
     # Sadece 'new_patient_coords' varsa kırmızı yıldızı çiz
     if new_patient_coords is not None:
@@ -280,7 +349,15 @@ def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=Non
             name=T("legend_new")
         ))
     
-    fig.update_layout(title=T("plot_title_tsne"), xaxis_title="t-SNE Dimension 1", yaxis_title="t-SNE Dimension 2", plot_bgcolor=COLOR_BACKGROUND, paper_bgcolor=COLOR_BACKGROUND, font_color=COLOR_TEXT, legend_title_text=T("legend_title"))
+    fig.update_layout(
+        title=T("plot_title_tsne"), 
+        xaxis_title="t-SNE Dimension 1", 
+        yaxis_title="t-SNE Dimension 2", 
+        plot_bgcolor=COLOR_BACKGROUND, 
+        paper_bgcolor=COLOR_BACKGROUND, 
+        font_color=COLOR_TEXT, 
+        legend_title_text=T("legend_title")
+    )
     return fig
 
 def plot_uncertainty_vector(x_new_vec_df, lang):
