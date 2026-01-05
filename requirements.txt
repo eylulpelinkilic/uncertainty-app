@@ -5,5 +5,4 @@ scikit-learn
 openpyxl
 plotly
 matplotlib
-scipy
-openTSNE
+seaborn
