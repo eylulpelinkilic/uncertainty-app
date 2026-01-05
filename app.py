@@ -29,7 +29,7 @@ BEST_CLASSIFIER_PATH = os.path.join(ARTIFACT_DIR, "best_classifier.pkl")
 # --- MODEL SABİTLERİ ---
 G1, G2 = 1, 2 # Sadece iki grubumuz var
 EPS = 1e-6 
-IMPUTATION_THRESHOLD = 5 # En fazla izin verilen eksik alan sayısı
+IMPUTATION_THRESHOLD = 0 # Hiç eksik alan kabul edilmez - tüm feature'lar zorunlu
 
 # --- DİL (ÇEVİRİ) SÖZLÜĞÜ (GÜNCELLENDİ) ---
 LANG_STRINGS = {
@@ -46,8 +46,8 @@ LANG_STRINGS = {
         "TR": "Yeni Hasta Girişi"
     },
     "info_note": {
-        "ENG": f"NOTE: You may leave up to {IMPUTATION_THRESHOLD} fields blank. They will be auto-imputed.",
-        "TR": f"NOT: En fazla {IMPUTATION_THRESHOLD} alanı boş bırakabilirsiniz. Bu alanlar otomatik olarak doldurulacaktır."
+        "ENG": "NOTE: All fields are required. Please fill in all patient data.",
+        "TR": "NOT: Tüm alanlar zorunludur. Lütfen tüm hasta verilerini doldurun."
     },
     "key_features": {"ENG": "Key Features", "TR": "Anahtar Özellikler"},
     "symptoms": {"ENG": "Symptoms & Presentation", "TR": "Semptomlar ve Başvuru"},
@@ -459,88 +459,15 @@ if artifacts is not None:
             missing_features = [feature for feature, value in patient_data.items() if value is None]
             num_missing = len(missing_features)
             
-            # 1. Durum: Çok fazla eksik -> HATA
-            if num_missing > IMPUTATION_THRESHOLD:
+            # Eksik feature varsa -> HATA (imputation yok)
+            if num_missing > 0:
                 st.error(T("error_missing_max").format(num_missing=num_missing))
                 st.subheader(T("error_missing_fields"))
                 for f in missing_features[:10]: st.write(f"- {f}")
                 if len(missing_features) > 10: st.write("...and more.")
-            
-            # 2. Durum: Az eksik -> DOLDUR VE UYAR
-            elif num_missing > 0:
-                st.header(T("header_output"))
-                st.warning(T("warn_imputed").format(num_missing=num_missing))
-                imputed_features_list = []
-                imputed_patient_data = patient_data.copy()
-                
-                for feature in missing_features:
-                    imputation_value = imputation_values.get(feature)
-                    if imputation_value is not None:
-                        imputed_patient_data[feature] = imputation_value
-                        imputed_features_list.append(f"- **{feature}** ({T('imputed_as')}: `{imputation_value:.2f}`)")
-                    else:
-                        st.error(T("critical_error_impute").format(feature=feature))
-                        imputed_patient_data = None 
-                        break
-                
-                st.expander(T("view_imputed"), expanded=False).markdown("\n".join(imputed_features_list))
-                
-                if imputed_patient_data:
-                    # Doldurulmuş Veri ile Hesapla
-                    x_new_vec_raw = predict_patient_uncertainty(imputed_patient_data, model_artifacts, feature_list)
-                    x_new_vec_imputed = np.nan_to_num(x_new_vec_raw).reshape(1, -1)
-                    x_new_std = scaler.transform(x_new_vec_imputed)
-                    new_coords_xy = find_tsne_position(x_new_std, embedding_data['X_std'], embedding_data['X_emb'], k=5)
-                    
-                    # Model prediction (if classifier is available)
-                    if best_classifier is not None:
-                        predicted_class, prob_class_1, prob_class_2 = predict_with_classifier(x_new_std, best_classifier)
-                        
-                        if predicted_class is not None:
-                            st.subheader(T("prediction_title"))
-                            col_pred1, col_pred2 = st.columns(2)
-                            
-                            with col_pred1:
-                                st.metric(
-                                    T("predicted_class"),
-                                    T("class_1_name") if predicted_class == 1 else T("class_2_name")
-                                )
-                            
-                            with col_pred2:
-                                prob_display = prob_class_1 if predicted_class == 1 else prob_class_2
-                                st.metric(
-                                    T("prediction_probability"),
-                                    f"{prob_display:.1%}"
-                                )
-                            
-                            # Show probability breakdown
-                            prob_df = pd.DataFrame({
-                                "Class": [T("class_1_name"), T("class_2_name")],
-                                "Probability": [f"{prob_class_1:.1%}", f"{prob_class_2:.1%}"]
-                            })
-                            st.dataframe(prob_df, use_container_width=True, hide_index=True)
-                            
-                            # Model info (if available)
-                            if classifier_info:
-                                with st.expander(T("model_info"), expanded=False):
-                                    st.write(f"**Model:** {classifier_info['model_name']}")
-                                    if classifier_info.get('cv_score'):
-                                        st.write(f"**{T('cv_score')}:** {classifier_info['cv_score']:.4f}")
-                                    if classifier_info.get('test_metrics', {}).get('F1-score (macro)'):
-                                        st.write(f"**{T('test_score')}:** {classifier_info['test_metrics']['F1-score (macro)']:.4f}")
+                st.info("⚠️ All fields are required. Please fill in all patient data to proceed.")
 
-                    st.subheader(T("plot_title_tsne"))
-                    # 'new_patient_coords' parametresini gönderiyoruz
-                    fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
-                    st.plotly_chart(fig_tsne, use_container_width=True)
-                    
-                    st.subheader(T("plot_title_bar"))
-                    x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
-                    st.write(T("plot_top20"))
-                    fig_bar = plot_uncertainty_vector(x_new_vec_df, lang)
-                    st.plotly_chart(fig_bar, use_container_width=True)
-
-            # 3. Durum: Eksik yok -> HESAPLA
+            # Tüm feature'lar dolu -> HESAPLA
             else: 
                 st.header(T("header_output"))
                 st.success(T("success_all_data"))
