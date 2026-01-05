@@ -3,8 +3,12 @@ import pandas as pd
 import numpy as np
 import pickle
 import os
+import warnings
 import plotly.graph_objects as go
 from sklearn.neighbors import NearestNeighbors
+
+# Suppress scikit-learn version warnings for unpickling
+warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 # --- CONSTANTS ---
 # Renk Paleti
