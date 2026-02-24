@@ -6,7 +6,10 @@ import numpy as np
 import pandas as pd
 import pickle
 import os
+import warnings
 from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+warnings.filterwarnings("ignore")
 
 # --- Load artifacts ---
 print("Loading model and metadata...")
@@ -18,36 +21,38 @@ with open("split_indices.pkl", "rb") as f:
     split_indices = pickle.load(f)
 
 final_features = list(metadata["features"])
-train_idx = split_indices["train_idx"]
+train_idx = split_indices["train_idx"]   # original DataFrame index values (not positional)
 LABEL_COL = "GRUP"
 
 # --- Load raw data ---
-print("Loading new-data.xlsx...")
+print("Loading data...")
 df = pd.read_excel("NEW_Miyokardit_08.12.2025.xlsx", sheet_name=0)
 df = df.dropna(subset=[LABEL_COL])
 
-# --- Extract training split ---
-df_train = df.iloc[train_idx].copy()
+# --- Extract training split using label-based indexing (.loc) ---
+df_train = df.loc[train_idx].copy()
 X_train = df_train[final_features].copy()
 y_train = df_train[LABEL_COL].values
 
-# --- Drop rows with any NaN (same as nested CV preprocessing) ---
+# --- Drop rows with any NaN ---
 mask = ~X_train.isna().any(axis=1)
 X_train = X_train[mask]
 y_train = y_train[mask]
 print(f"Training samples after NaN drop: {len(X_train)}")
 print(f"Features: {len(final_features)}")
 
-# --- Transform through fitted pipeline steps ---
+# --- Transform through fitted UncertaintyTransformer ---
 print("Transforming through UncertaintyTransformer...")
 X_unc = model.named_steps["uncertainty"].transform(X_train)
-print("Transforming through StandardScaler...")
-X_std = model.named_steps["scaler"].transform(X_unc)
 
-# --- Run t-SNE ---
+# --- Scale with fresh StandardScaler (matches notebook: StandardScaler().fit_transform) ---
+print("Scaling with fresh StandardScaler...")
+X_std = StandardScaler().fit_transform(X_unc)
+
+# --- Run t-SNE with exact same parameters as NEW_uncertainty.ipynb ---
 print("Running t-SNE (this may take a minute)...")
-tsne = TSNE(n_components=2, random_state=42, perplexity=30,
-            max_iter=1500, metric="euclidean")
+tsne = TSNE(n_components=2, perplexity=50, learning_rate="auto",
+            init="pca", random_state=42)
 X_emb = tsne.fit_transform(X_std)
 print("t-SNE done.")
 
