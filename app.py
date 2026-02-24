@@ -2,11 +2,16 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import pickle
+import json
 import os
 import warnings
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 from sklearn.neighbors import NearestNeighbors
 from scipy.stats import gaussian_kde
+from uncertainty_utils import EPS
+from uncertainty_transformer import UncertaintyTransformer  # required for unpickling
 
 # Suppress scikit-learn version warnings for unpickling
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
@@ -20,16 +25,14 @@ COLOR_TEXT = "#333333"
 COLOR_NEW_PATIENT = "#E74C3C" 
 
 # Artifact Dosya Yolları
-ARTIFACT_DIR = "app_artifacts"
-MODEL_ARTIFACTS_PATH = os.path.join(ARTIFACT_DIR, "model_artifacts.pkl")
-SCALER_PATH = os.path.join(ARTIFACT_DIR, "scaler.pkl")
-EMBEDDING_PATH = os.path.join(ARTIFACT_DIR, "embedding_data.npz")
-IMPUTATION_PATH = os.path.join(ARTIFACT_DIR, "imputation_values.pkl")
-BEST_CLASSIFIER_PATH = os.path.join(ARTIFACT_DIR, "best_classifier.pkl")
+MODEL_PATH = "best_model_finetuned.pkl"
+METADATA_PATH = "model_metadata.pkl"
+TEST_METRICS_PATH = "final_test_metrics.json"
+EMBEDDING_PATH = os.path.join("app_artifacts", "embedding_data.npz")
 
 # --- MODEL SABİTLERİ ---
 G1, G2 = 1, 2 # Sadece iki grubumuz var
-EPS = 1e-6 
+# EPS imported from uncertainty_utils (1e-12) for consistency 
 IMPUTATION_THRESHOLD = 0 # Hiç eksik alan kabul edilmez - tüm feature'lar zorunlu
 
 # --- DİL (ÇEVİRİ) SÖZLÜĞÜ (GÜNCELLENDİ) ---
@@ -161,71 +164,30 @@ def T(key):
     lang = st.session_state.language
     return LANG_STRINGS.get(key, {}).get(lang, f"MISSING_KEY: {key}")
 
-# --- YARDIMCI FONKSİYONLAR ---
-def entropy(p, base=2):
-    p = np.clip(p, 0, 1); p = p / p.sum(); nz = p > 0
-    logp = np.log(p[nz]) / np.log(base)
-    return -np.sum(p[nz] * logp)
-
-def assign_nearest_class_and_z(xp, stats):
-    best_c, best_absz, best_z = None, np.inf, None
-    for c, (mu, sd) in stats.items():
-        if sd is None or np.isnan(sd) or sd == 0 or np.isnan(mu): continue
-        z = (xp - mu) / sd
-        if abs(z) < best_absz: best_absz, best_z, best_c = abs(z), z, c
-    return best_c, best_z
-
-def H_of_class_probvec(p_vec):
-    return entropy(p_vec, base=2)
-
 # --- ARTIFACT YÜKLEME ---
 @st.cache_resource(show_spinner="Loading model artifacts...")
 def load_artifacts():
     """Tüm artifact'ları diskten yükler ve cache'ler."""
     try:
-        with open(MODEL_ARTIFACTS_PATH, "rb") as f: model_artifacts = pickle.load(f)
-        with open(SCALER_PATH, "rb") as f: scaler = pickle.load(f)
+        with open(MODEL_PATH, "rb") as f:
+            model = pickle.load(f)
+        with open(METADATA_PATH, "rb") as f:
+            metadata = pickle.load(f)
         embedding_data = np.load(EMBEDDING_PATH)
-        with open(IMPUTATION_PATH, "rb") as f: imputation_values = pickle.load(f)
-        feature_list = list(model_artifacts.keys())
-        if not all(f in imputation_values for f in feature_list):
-             raise Exception("Imputation map is missing features present in the model.")
-        
-        # Load best classifier if available (optional)
-        best_classifier = None
-        classifier_info = None
-        if os.path.exists(BEST_CLASSIFIER_PATH):
-            try:
-                with open(BEST_CLASSIFIER_PATH, "rb") as f: 
-                    classifier_data = pickle.load(f)
-                    best_classifier = classifier_data.get("model")
-                    classifier_info = {
-                        "model_name": classifier_data.get("model_name", "Unknown"),
-                        "cv_score": classifier_data.get("cv_score", None),
-                        "test_metrics": classifier_data.get("test_metrics", {})
-                    }
-            except Exception as e:
-                st.warning(f"Could not load best classifier: {e}")
-        
-        return model_artifacts, scaler, embedding_data, imputation_values, feature_list, best_classifier, classifier_info
+
+        test_metrics = {}
+        if os.path.exists(TEST_METRICS_PATH):
+            with open(TEST_METRICS_PATH) as f:
+                test_metrics = json.load(f)
+
+        feature_list = list(metadata["features"])
+        return model, metadata, embedding_data, test_metrics, feature_list
     except Exception as e:
         st.error(f"Error loading artifacts: {e}")
-        st.error(f"Please RE-RUN `pre-processing.py` to generate all artifacts.")
+        st.error("Please ensure best_model_finetuned.pkl, model_metadata.pkl, and app_artifacts/embedding_data.npz exist.")
         return None
 
 # --- TAHMİNLEME FONKSİYONLARI ---
-def predict_patient_uncertainty(input_data, model_artifacts, feature_list):
-    x_new_vec = np.zeros(len(feature_list))
-    for i, feature in enumerate(feature_list):
-        artifacts = model_artifacts[feature]
-        xp = input_data[feature] 
-        c_star, zpf = assign_nearest_class_and_z(xp, artifacts['stats'])
-        if (c_star is None) or (zpf is None) or np.isnan(zpf): x_new_vec[i] = np.nan; continue
-        H_f = H_of_class_probvec(artifacts['class_probvec'][c_star])
-        S_f = artifacts['S_f']
-        x_new_vec[i] = (H_f * zpf) / (S_f + EPS)
-    return x_new_vec
-
 def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
     nn = NearestNeighbors(n_neighbors=k, metric='euclidean'); nn.fit(X_std_train)
     distances, indices = nn.kneighbors(x_new_std)
@@ -233,131 +195,142 @@ def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
     new_position = np.mean(neighbor_coords_2d, axis=0)
     return new_position[0], new_position[1]
 
-def predict_with_classifier(x_new_scaled, classifier):
-    """Use the trained classifier to predict class and probability"""
-    if classifier is None:
-        return None, None, None
-    
-    try:
-        y_pred = classifier.predict(x_new_scaled)
-        y_prob = classifier.predict_proba(x_new_scaled)
-        
-        # Get predicted class (1 or 2)
-        predicted_class = int(y_pred[0])
-        
-        # Get probabilities for both classes
-        prob_class_1 = float(y_prob[0][0])  # Myocarditis
-        prob_class_2 = float(y_prob[0][1])  # ACS
-        
-        return predicted_class, prob_class_1, prob_class_2
-    except Exception as e:
-        st.error(f"Error in prediction: {e}")
-        return None, None, None
-
 # --- PLOT/GRAFİK FONKSİYONLARI (ÇEVİRİLİ) ---
 
 def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=None):
     """
     2-sınıflı (G1 vs G2) t-SNE grafiğini KDE (Kernel Density Estimation) ile çizer.
+    Notebook'taki implementasyonun aynısı.
     'new_patient_coords' opsiyoneldir. Eğer verilmezse, sadece "bulut" çizilir.
     """
-    df_emb = pd.DataFrame({"x": X_emb_train[:, 0], "y": X_emb_train[:, 1], "label": y_train})
-    fig = go.Figure()
+    labels = y_train.copy()
     
-    # KDE hesaplamaları için grid oluştur
+    # Padding around extreme points so contours don't touch the frame
     pad = 2.0
     xmin, xmax = X_emb_train[:, 0].min() - pad, X_emb_train[:, 0].max() + pad
     ymin, ymax = X_emb_train[:, 1].min() - pad, X_emb_train[:, 1].max() + pad
     
-    resolution = 100
+    # 250×250 grid (adjust for speed ↔ smoothness)
+    resolution = 1000
     xs = np.linspace(xmin, xmax, resolution)
     ys = np.linspace(ymin, ymax, resolution)
     xx, yy = np.meshgrid(xs, ys)
     grid = np.vstack([xx.ravel(), yy.ravel()])
     
-    # Her sınıf için KDE hesapla
-    class1 = X_emb_train[y_train == G1]
-    class2 = X_emb_train[y_train == G2]
+    class1 = X_emb_train[labels == G1]
+    class2 = X_emb_train[labels == G2]
     
-    if len(class1) > 0:
-        kde1 = gaussian_kde(class1.T, bw_method="scott")
-        z1 = kde1(grid).reshape(xx.shape)
-        
-        # Grup 1 (Miyokardit) için contour plot
-        fig.add_trace(go.Contour(
-            x=xs, y=ys, z=z1,
-            colorscale=[[0, 'rgba(52, 152, 219, 0)'], [0.5, 'rgba(52, 152, 219, 0.3)'], [1, 'rgba(52, 152, 219, 0.6)']],
-            showscale=False,
-            contours=dict(
-                start=0,
-                end=np.quantile(z1, 0.95),
-                size=np.quantile(z1, 0.95) / 5,
-                coloring='fill'
-            ),
-            name=T("legend_g1"),
-            hoverinfo='skip'
-        ))
+    kde1 = gaussian_kde(class1.T, bw_method="scott")
+    kde2 = gaussian_kde(class2.T, bw_method="scott")
     
-    if len(class2) > 0:
-        kde2 = gaussian_kde(class2.T, bw_method="scott")
-        z2 = kde2(grid).reshape(xx.shape)
-        
-        # Grup 2 (AKS-KONTROL) için contour plot
-        fig.add_trace(go.Contour(
-            x=xs, y=ys, z=z2,
-            colorscale=[[0, 'rgba(243, 156, 18, 0)'], [0.5, 'rgba(243, 156, 18, 0.3)'], [1, 'rgba(243, 156, 18, 0.6)']],
-            showscale=False,
-            contours=dict(
-                start=0,
-                end=np.quantile(z2, 0.95),
-                size=np.quantile(z2, 0.95) / 5,
-                coloring='fill'
-            ),
-            name=T("legend_g2"),
-            hoverinfo='skip'
-        ))
+    z1 = kde1(grid).reshape(xx.shape)
+    z2 = kde2(grid).reshape(xx.shape)
     
-    # Scatter plot'lar (daha az opacity ile)
-    df_1 = df_emb[df_emb['label'] == G1]
-    if len(df_1) > 0:
-        fig.add_trace(go.Scatter(
-            x=df_1['x'], y=df_1['y'], 
-            mode='markers', 
-            marker=dict(color=COLOR_BLUE, size=4, opacity=0.4), 
-            name=T("legend_g1"),
-            showlegend=False,
-            hoverinfo='skip'
-        ))
+    q = 0.6  # 60 % iso-density
+    level1 = np.quantile(z1, q)
+    level2 = np.quantile(z2, q)
     
-    df_2 = df_emb[df_emb['label'] == G2]
-    if len(df_2) > 0:
-        fig.add_trace(go.Scatter(
-            x=df_2['x'], y=df_2['y'], 
-            mode='markers', 
-            marker=dict(color=COLOR_ORANGE, size=4, opacity=0.4), 
-            name=T("legend_g2"),
-            showlegend=False,
-            hoverinfo='skip'
-        ))
+    overlap = (z1 >= level1) & (z2 >= level2)
+    
+    # --- 6.  Build alpha masks & colour-shift for the overlap -----------------
+    def normalise(z, clip=0.98):
+        """Scale density field to 0–1, clipping the top `clip` quantile."""
+        zmax = np.quantile(z, clip)
+        return np.clip(z / zmax, 0, 1)
+    
+    # -------------------------------------------------------------------------
+    # 1) Alpha masks for the *pure* class regions (same idea as before)
+    # -------------------------------------------------------------------------
+    alpha1 = normalise(z1)**0.5
+    alpha2 = normalise(z2)**0.5
+    alpha1[z1 < level1] = 0.0
+    alpha2[z2 < level2] = 0.0
+    
+    # -------------------------------------------------------------------------
+    # 2) Identify the overlap and give it its own alpha map
+    # -------------------------------------------------------------------------
+    overlap_mask = (alpha1 > 0) & (alpha2 > 0)
+    alpha_overlap = np.maximum(alpha1, alpha2)
+    alpha_overlap[~overlap_mask] = 0.0
+    
+    # Remove the red/blue alphas *inside* the overlap so they don't sit on top
+    alpha1[overlap_mask] = 0.0
+    alpha2[overlap_mask] = 0.0
+    
+    # -------------------------------------------------------------------------
+    # 3) Per-pixel colour for the overlap
+    #    • Start from mid-grey  (0.5, 0.5, 0.5)
+    #    • Shift toward red or blue according to local dominance
+    # -------------------------------------------------------------------------
+    eps = 1e-12  # avoid division by zero
+    total = z1 + z2 + eps
+    t = (z1 - z2) / total  # -1 ⟶ pure blue side, +1 ⟶ pure red side
+    
+    shift_strength = 0.3  # 0 → always grey, base_gray → full red/blue at edge
+    
+    # Base: all grey
+    R = np.full_like(t, 0.5)
+    G = np.full_like(t, 0.5)
+    B = np.full_like(t, 0.5)
+    
+    # Shift toward red where t > 0
+    pos = t > 0
+    R[pos] += shift_strength * t[pos]
+    G[pos] -= shift_strength * t[pos]
+    B[pos] -= shift_strength * t[pos]
+    
+    # Shift toward blue where t < 0
+    neg = t < 0
+    B[neg] += shift_strength * (-t[neg])
+    R[neg] -= shift_strength * (-t[neg])
+    G[neg] -= shift_strength * (-t[neg])
+    
+    shape = (*alpha1.shape, 4)  # (Ny, Nx, 4)
+    
+    red_img = np.zeros(shape)
+    red_img[..., 0] = 1.0  # R channel
+    red_img[..., 3] = alpha1  # alpha   (class-1 density)
+    
+    blue_img = np.zeros(shape)
+    blue_img[..., 2] = 1.0  # B channel
+    blue_img[..., 3] = alpha2  # alpha   (class-2 density)
+    
+    # Build the RGBA image for the overlap
+    shape = (*alpha_overlap.shape, 4)
+    over_img = np.zeros(shape)
+    over_img[..., 0] = R
+    over_img[..., 1] = G
+    over_img[..., 2] = B
+    over_img[..., 3] = alpha_overlap  # density-weighted fade-out
+    
+    # --- Plot, final clean look ----------------------------------------------
+    fig, ax = plt.subplots()
+    
+    # Filled RGBA layers
+    for img in [over_img, red_img, blue_img]:
+        ax.imshow(img, extent=(xmin, xmax, ymin, ymax), origin="lower", interpolation="bilinear")
+    
+    # Hide the entire axes frame (ticks, spines, labels)
+    ax.set_axis_off()  # 'off' removes ticks, spines and axis labels
+    
+    # ── proxy artists just for the legend ────────────────────────────
+    legend_handles = [
+        Patch(facecolor="red", edgecolor="red", label=T("legend_g1")),
+        Patch(facecolor="blue", edgecolor="blue", label=T("legend_g2"))
+    ]
     
     # Sadece 'new_patient_coords' varsa kırmızı yıldızı çiz
     if new_patient_coords is not None:
-        fig.add_trace(go.Scatter(
-            x=[new_patient_coords[0]], y=[new_patient_coords[1]],
-            mode='markers',
-            marker=dict(color=COLOR_NEW_PATIENT, size=16, symbol='star', line=dict(color='Black', width=2)),
-            name=T("legend_new")
-        ))
+        ax.scatter(new_patient_coords[0], new_patient_coords[1], 
+                  c='red', s=200, marker='*', edgecolors='darkred', linewidths=2,
+                  zorder=10, label=T("legend_new"))
+        legend_handles.append(
+            Patch(facecolor="red", edgecolor="darkred", label=T("legend_new"))
+        )
     
-    fig.update_layout(
-        title=T("plot_title_tsne"), 
-        xaxis_title="t-SNE Dimension 1", 
-        yaxis_title="t-SNE Dimension 2", 
-        plot_bgcolor=COLOR_BACKGROUND, 
-        paper_bgcolor=COLOR_BACKGROUND, 
-        font_color=COLOR_TEXT, 
-        legend_title_text=T("legend_title")
-    )
+    ax.legend(handles=legend_handles, loc='upper right', frameon=True)
+    
+    plt.tight_layout()
     return fig
 
 def plot_uncertainty_vector(x_new_vec_df, lang):
@@ -470,7 +443,7 @@ lang = st.session_state.language
 artifacts = load_artifacts()
 
 if artifacts is not None:
-    model_artifacts, scaler, embedding_data, imputation_values, feature_list, best_classifier, classifier_info = artifacts
+    model, metadata, embedding_data, test_metrics, feature_list = artifacts
     
     # --- BASİT BAŞLIK VE DİL SEÇİMİ (APP BAR İPTAL EDİLDİ) ---
     st.title(T("main_title"))
@@ -549,53 +522,64 @@ if artifacts is not None:
                 st.header(T("header_output"))
                 st.success(T("success_all_data"))
                 
-                # Tam Veri ile Hesapla
-                x_new_vec_raw = predict_patient_uncertainty(patient_data, model_artifacts, feature_list)
-                x_new_vec_imputed = np.nan_to_num(x_new_vec_raw).reshape(1, -1)
-                x_new_std = scaler.transform(x_new_vec_imputed)
+                # Transform patient data through the fitted pipeline
+                X_new_df = pd.DataFrame([patient_data])[feature_list]
+
+                # Raw uncertainty values (transformer step only) — for bar chart
+                x_new_unc = model.named_steps['uncertainty'].transform(X_new_df)
+                x_new_vec_raw = x_new_unc[0]
+
+                # Fully scaled representation (uncertainty + scaler) — for t-SNE positioning
+                x_new_std = model.named_steps['scaler'].transform(x_new_unc)
                 new_coords_xy = find_tsne_position(x_new_std, embedding_data['X_std'], embedding_data['X_emb'], k=5)
-                
-                # Model prediction (if classifier is available)
-                if best_classifier is not None:
-                    predicted_class, prob_class_1, prob_class_2 = predict_with_classifier(x_new_std, best_classifier)
-                    
-                    if predicted_class is not None:
-                        st.subheader(T("prediction_title"))
-                        col_pred1, col_pred2 = st.columns(2)
-                        
-                        with col_pred1:
-                            st.metric(
-                                T("predicted_class"),
-                                T("class_1_name") if predicted_class == 1 else T("class_2_name")
-                            )
-                        
-                        with col_pred2:
-                            prob_display = prob_class_1 if predicted_class == 1 else prob_class_2
-                            st.metric(
-                                T("prediction_probability"),
-                                f"{prob_display:.1%}"
-                            )
-                        
-                        # Show probability breakdown
-                        prob_df = pd.DataFrame({
-                            "Class": [T("class_1_name"), T("class_2_name")],
-                            "Probability": [f"{prob_class_1:.1%}", f"{prob_class_2:.1%}"]
-                        })
-                        st.dataframe(prob_df, use_container_width=True, hide_index=True)
-                        
-                        # Model info (if available)
-                        if classifier_info:
-                            with st.expander(T("model_info"), expanded=False):
-                                st.write(f"**Model:** {classifier_info['model_name']}")
-                                if classifier_info.get('cv_score'):
-                                    st.write(f"**{T('cv_score')}:** {classifier_info['cv_score']:.4f}")
-                                if classifier_info.get('test_metrics', {}).get('F1-score (macro)'):
-                                    st.write(f"**{T('test_score')}:** {classifier_info['test_metrics']['F1-score (macro)']:.4f}")
+
+                # Full pipeline prediction
+                y_pred = model.predict(X_new_df)
+                y_prob = model.predict_proba(X_new_df)
+                predicted_class = int(y_pred[0])
+                clf_classes = list(model.named_steps['clf'].classes_)
+                prob_class_1 = float(y_prob[0][clf_classes.index(G1)])
+                prob_class_2 = float(y_prob[0][clf_classes.index(G2)])
+
+                st.subheader(T("prediction_title"))
+                col_pred1, col_pred2 = st.columns(2)
+
+                with col_pred1:
+                    st.metric(
+                        T("predicted_class"),
+                        T("class_1_name") if predicted_class == G1 else T("class_2_name")
+                    )
+
+                with col_pred2:
+                    prob_display = prob_class_1 if predicted_class == G1 else prob_class_2
+                    st.metric(
+                        T("prediction_probability"),
+                        f"{prob_display:.1%}"
+                    )
+
+                # Show probability breakdown
+                prob_df = pd.DataFrame({
+                    "Class": [T("class_1_name"), T("class_2_name")],
+                    "Probability": [f"{prob_class_1:.1%}", f"{prob_class_2:.1%}"]
+                })
+                st.dataframe(prob_df, use_container_width=True, hide_index=True)
+
+                # Model info
+                with st.expander(T("model_info"), expanded=False):
+                    st.write(f"**Model:** {metadata['model_name']}")
+                    cv = metadata.get('cv_results', {})
+                    if cv.get('recall_mean') is not None:
+                        st.write(f"**CV Recall (macro):** {cv['recall_mean']:.4f} ± {cv.get('recall_std', 0):.4f}")
+                        st.caption("Nested CV estimate (single-model selection procedure per fold).")
+                    if test_metrics.get('recall_macro') is not None:
+                        st.write(f"**Test Recall (macro):** {test_metrics['recall_macro']:.4f}")
+                    if test_metrics.get('f1_macro') is not None:
+                        st.write(f"**{T('test_score')}:** {test_metrics['f1_macro']:.4f}")
 
                 st.subheader(T("plot_title_tsne"))
                 # 'new_patient_coords' parametresini gönderiyoruz
                 fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
-                st.plotly_chart(fig_tsne, use_container_width=True)
+                st.pyplot(fig_tsne)
                 
                 st.subheader(T("plot_title_bar"))
                 x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
@@ -614,7 +598,7 @@ if artifacts is not None:
                 lang
                 # new_patient_coords gönderilmiyor (None olacak)
             )
-            st.plotly_chart(fig_tsne_initial, use_container_width=True)
+            st.pyplot(fig_tsne_initial)
             
             st.divider() # Grafik ve açıklama arasına çizgi
             
