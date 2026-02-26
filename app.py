@@ -4,7 +4,9 @@ import numpy as np
 import pickle
 import json
 import os
+import base64
 import warnings
+from io import BytesIO
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
@@ -217,153 +219,156 @@ def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
 # --- PLOT/GRAFİK FONKSİYONLARI (ÇEVİRİLİ) ---
 
 @st.cache_data
-def _plot_diagnostic_landscape_cached(X_emb_train_tuple, y_train_tuple, lang):
-    """Cache'li versiyon — sadece bulut (yeni hasta yok). Tuple alır çünkü cache hashable ister."""
-    return plot_diagnostic_landscape(
-        np.array(X_emb_train_tuple),
-        np.array(y_train_tuple),
-        lang,
-        new_patient_coords=None
-    )
-
-
-def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=None):
+def _compute_landscape_image(X_emb_tuple, y_tuple):
     """
-    2-sınıflı (G1 vs G2) t-SNE grafiğini KDE (Kernel Density Estimation) ile çizer.
-    Notebook'taki implementasyonun aynısı.
-    'new_patient_coords' opsiyoneldir. Eğer verilmezse, sadece "bulut" çizilir.
+    KDE hesaplar, RGBA katmanları alfa-kompozit eder ve base64 PNG + koordinat sınırları döndürür.
+    Sadece eğitim verisi değiştiğinde yeniden hesaplar (cache'li).
     """
-    labels = y_train.copy()
-    
-    # Padding around extreme points so contours don't touch the frame
+    X_emb_train = np.array(X_emb_tuple)
+    labels = np.array(y_tuple)
+
     pad = 2.0
     xmin, xmax = X_emb_train[:, 0].min() - pad, X_emb_train[:, 0].max() + pad
     ymin, ymax = X_emb_train[:, 1].min() - pad, X_emb_train[:, 1].max() + pad
-    
-    # 250×250 grid (adjust for speed ↔ smoothness)
-    resolution = 1000
+
+    resolution = 400
     xs = np.linspace(xmin, xmax, resolution)
     ys = np.linspace(ymin, ymax, resolution)
     xx, yy = np.meshgrid(xs, ys)
     grid = np.vstack([xx.ravel(), yy.ravel()])
-    
+
     class1 = X_emb_train[labels == G1]
     class2 = X_emb_train[labels == G2]
-    
+
     kde1 = gaussian_kde(class1.T, bw_method="scott")
     kde2 = gaussian_kde(class2.T, bw_method="scott")
-    
+
     z1 = kde1(grid).reshape(xx.shape)
     z2 = kde2(grid).reshape(xx.shape)
-    
-    q = 0.6  # 60 % iso-density
+
+    q = 0.6
     level1 = np.quantile(z1, q)
     level2 = np.quantile(z2, q)
-    
-    overlap = (z1 >= level1) & (z2 >= level2)
-    
-    # --- 6.  Build alpha masks & colour-shift for the overlap -----------------
+
     def normalise(z, clip=0.98):
-        """Scale density field to 0–1, clipping the top `clip` quantile."""
         zmax = np.quantile(z, clip)
         return np.clip(z / zmax, 0, 1)
-    
-    # -------------------------------------------------------------------------
-    # 1) Alpha masks for the *pure* class regions (same idea as before)
-    # -------------------------------------------------------------------------
-    alpha1 = normalise(z1)**0.5
-    alpha2 = normalise(z2)**0.5
+
+    alpha1 = normalise(z1) ** 0.5
+    alpha2 = normalise(z2) ** 0.5
     alpha1[z1 < level1] = 0.0
     alpha2[z2 < level2] = 0.0
-    
-    # -------------------------------------------------------------------------
-    # 2) Identify the overlap and give it its own alpha map
-    # -------------------------------------------------------------------------
+
     overlap_mask = (alpha1 > 0) & (alpha2 > 0)
     alpha_overlap = np.maximum(alpha1, alpha2)
     alpha_overlap[~overlap_mask] = 0.0
-    
-    # Remove the red/blue alphas *inside* the overlap so they don't sit on top
     alpha1[overlap_mask] = 0.0
     alpha2[overlap_mask] = 0.0
-    
-    # -------------------------------------------------------------------------
-    # 3) Per-pixel colour for the overlap
-    #    • Start from mid-grey  (0.5, 0.5, 0.5)
-    #    • Shift toward red or blue according to local dominance
-    # -------------------------------------------------------------------------
-    eps = 1e-12  # avoid division by zero
+
+    eps = 1e-12
     total = z1 + z2 + eps
-    t = (z1 - z2) / total  # -1 ⟶ pure blue side, +1 ⟶ pure red side
-    
-    shift_strength = 0.3  # 0 → always grey, base_gray → full red/blue at edge
-    
-    # Base: all grey
+    t = (z1 - z2) / total
+    shift_strength = 0.3
+
     R = np.full_like(t, 0.5)
-    G = np.full_like(t, 0.5)
+    Gch = np.full_like(t, 0.5)
     B = np.full_like(t, 0.5)
-    
-    # Shift toward red where t > 0
     pos = t > 0
     R[pos] += shift_strength * t[pos]
-    G[pos] -= shift_strength * t[pos]
+    Gch[pos] -= shift_strength * t[pos]
     B[pos] -= shift_strength * t[pos]
-    
-    # Shift toward blue where t < 0
     neg = t < 0
     B[neg] += shift_strength * (-t[neg])
     R[neg] -= shift_strength * (-t[neg])
-    G[neg] -= shift_strength * (-t[neg])
-    
-    shape = (*alpha1.shape, 4)  # (Ny, Nx, 4)
-    
-    red_img = np.zeros(shape)
-    red_img[..., 0] = 1.0  # R channel
-    red_img[..., 3] = alpha1  # alpha   (class-1 density)
-    
-    blue_img = np.zeros(shape)
-    blue_img[..., 2] = 1.0  # B channel
-    blue_img[..., 3] = alpha2  # alpha   (class-2 density)
-    
-    # Build the RGBA image for the overlap
-    shape = (*alpha_overlap.shape, 4)
-    over_img = np.zeros(shape)
-    over_img[..., 0] = R
-    over_img[..., 1] = G
-    over_img[..., 2] = B
-    over_img[..., 3] = alpha_overlap  # density-weighted fade-out
-    
-    # --- Plot, final clean look ----------------------------------------------
-    plt.close('all')
-    fig, ax = plt.subplots()
-    fig.patch.set_facecolor('white')
+    Gch[neg] -= shift_strength * (-t[neg])
 
-    # Filled RGBA layers
-    for img in [over_img, red_img, blue_img]:
-        ax.imshow(img, extent=(xmin, xmax, ymin, ymax), origin="lower", interpolation="bilinear")
+    H, W = alpha1.shape
+    shape4 = (H, W, 4)
+    red_img = np.zeros(shape4);  red_img[..., 0] = 1.0; red_img[..., 3] = alpha1
+    blue_img = np.zeros(shape4); blue_img[..., 2] = 1.0; blue_img[..., 3] = alpha2
+    over_img = np.zeros(shape4)
+    over_img[..., 0] = R; over_img[..., 1] = Gch; over_img[..., 2] = B
+    over_img[..., 3] = alpha_overlap
 
-    # Hide the entire axes frame (ticks, spines, labels)
-    ax.set_axis_off()
+    # Alpha-composite onto white background (same draw order as matplotlib imshow)
+    composite = np.ones((H, W, 3), dtype=np.float32)
+    for layer in [over_img, red_img, blue_img]:
+        a = layer[..., 3:4]
+        composite = layer[..., :3] * a + composite * (1 - a)
 
-    # ── proxy artists just for the legend ────────────────────────────
-    legend_handles = [
-        Patch(facecolor="red",  edgecolor="red",  label=T("legend_g1")),
-        Patch(facecolor="blue", edgecolor="blue", label=T("legend_g2")),
-        Patch(facecolor="gray", edgecolor="gray", label="Uncertain"),
-    ]
+    # Convert to uint8, flip vertically (matplotlib origin='lower' → plotly top-left)
+    img_uint8 = (np.clip(composite, 0, 1) * 255).astype(np.uint8)
+    img_flipped = img_uint8[::-1, :, :]
 
-    # Sadece 'new_patient_coords' varsa kırmızı yıldızı çiz
+    buf = BytesIO()
+    plt.imsave(buf, img_flipped, format="png")
+    buf.seek(0)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+
+    return b64, xmin, xmax, ymin, ymax
+
+
+def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=None):
+    """
+    Plotly interaktif t-SNE grafiği. KDE görüntüsü cache'den gelir,
+    yeni hasta yıldızı varsa scatter trace olarak üstüne eklenir.
+    """
+    X_emb_tuple = tuple(map(tuple, X_emb_train))
+    y_tuple = tuple(y_train.tolist())
+    b64, xmin, xmax, ymin, ymax = _compute_landscape_image(X_emb_tuple, y_tuple)
+
+    fig = go.Figure()
+
+    # Eksen aralığını sabitleyen görünmez iz
+    fig.add_trace(go.Scatter(
+        x=[xmin, xmax], y=[ymin, ymax],
+        mode="markers", marker=dict(opacity=0, size=0.1),
+        showlegend=False, hoverinfo="skip"
+    ))
+
+    # KDE yoğunluk görüntüsü
+    fig.add_layout_image(dict(
+        source=f"data:image/png;base64,{b64}",
+        xref="x", yref="y",
+        x=xmin, y=ymax,
+        sizex=xmax - xmin, sizey=ymax - ymin,
+        sizing="stretch",
+        layer="below",
+        xanchor="left", yanchor="top",
+    ))
+
+    # Legend proxy izleri
+    for color, label in [
+        ("red",  T("legend_g1")),
+        ("blue", T("legend_g2")),
+        ("gray", "Uncertain"),
+    ]:
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers",
+            marker=dict(symbol="square", size=12, color=color),
+            name=label, showlegend=True
+        ))
+
+    # Yeni hasta yıldızı
     if new_patient_coords is not None:
-        ax.scatter(new_patient_coords[0], new_patient_coords[1],
-                  c='limegreen', s=200, marker='*', edgecolors='darkgreen', linewidths=2,
-                  zorder=10, label=T("legend_new"))
-        legend_handles.append(
-            Patch(facecolor="limegreen", edgecolor="darkgreen", label=T("legend_new"))
-        )
+        fig.add_trace(go.Scatter(
+            x=[new_patient_coords[0]], y=[new_patient_coords[1]],
+            mode="markers",
+            marker=dict(symbol="star", size=20, color="limegreen",
+                        line=dict(color="darkgreen", width=2)),
+            name=T("legend_new"), showlegend=True
+        ))
 
-    ax.legend(handles=legend_handles, loc='upper right', frameon=False)
-
-    fig.tight_layout()
+    fig.update_layout(
+        xaxis=dict(visible=False, range=[xmin, xmax]),
+        yaxis=dict(visible=False, range=[ymin, ymax], scaleanchor="x"),
+        margin=dict(l=0, r=0, t=0, b=0),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        legend=dict(x=1.0, y=1.0, xanchor="right", yanchor="top",
+                    bgcolor="rgba(0,0,0,0)", borderwidth=0),
+        height=450,
+    )
     return fig
 
 def plot_uncertainty_vector(x_new_vec_df, lang):
@@ -613,7 +618,7 @@ if artifacts is not None:
                 st.subheader(T("plot_title_tsne"))
                 # 'new_patient_coords' parametresini gönderiyoruz
                 fig_tsne = plot_diagnostic_landscape(embedding_data['X_emb'], embedding_data['y'], lang, new_patient_coords=new_coords_xy)
-                st.pyplot(fig_tsne)
+                st.plotly_chart(fig_tsne, use_container_width=True)
                 
                 st.subheader(T("plot_title_bar"))
                 x_new_vec_df = pd.DataFrame({"Feature": feature_list, "Uncertainty Score": x_new_vec_raw}).sort_values(by="Uncertainty Score", ascending=False).head(20)
@@ -624,14 +629,14 @@ if artifacts is not None:
         else:
             # --- Karşılama Ekranı "Bulut"u gösterir ---
             
-            # 1. ÖNCE "BULUT"U GÖSTER — canlı matplotlib (cache'li)
+            # 1. ÖNCE "BULUT"U GÖSTER — plotly (interaktif, cache'li)
             st.subheader(T("plot_title_tsne"))
-            fig_tsne_initial = _plot_diagnostic_landscape_cached(
-                tuple(map(tuple, embedding_data['X_emb'])),
-                tuple(embedding_data['y'].tolist()),
+            fig_tsne_initial = plot_diagnostic_landscape(
+                embedding_data['X_emb'],
+                embedding_data['y'],
                 lang
             )
-            st.pyplot(fig_tsne_initial)
+            st.plotly_chart(fig_tsne_initial, use_container_width=True)
             
             st.divider() # Grafik ve açıklama arasına çizgi
             
