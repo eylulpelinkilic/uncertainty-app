@@ -6,12 +6,10 @@ import json
 import os
 import base64
 import warnings
-from io import BytesIO
 import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 from sklearn.neighbors import NearestNeighbors
-from scipy.stats import gaussian_kde
 from uncertainty_utils import EPS
 from uncertainty_transformer import UncertaintyTransformer  # required for unpickling
 
@@ -220,103 +218,25 @@ def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
 # --- PLOT/GRAFİK FONKSİYONLARI (ÇEVİRİLİ) ---
 
 @st.cache_data
-def _compute_landscape_image(X_emb_tuple, y_tuple):
-    """
-    KDE hesaplar, RGBA katmanları alfa-kompozit eder ve base64 PNG + koordinat sınırları döndürür.
-    Sadece eğitim verisi değiştiğinde yeniden hesaplar (cache'li).
-    """
-    X_emb_train = np.array(X_emb_tuple)
-    labels = np.array(y_tuple)
-
-    pad = 2.0
-    xmin, xmax = X_emb_train[:, 0].min() - pad, X_emb_train[:, 0].max() + pad
-    ymin, ymax = X_emb_train[:, 1].min() - pad, X_emb_train[:, 1].max() + pad
-
-    resolution = 400
-    xs = np.linspace(xmin, xmax, resolution)
-    ys = np.linspace(ymin, ymax, resolution)
-    xx, yy = np.meshgrid(xs, ys)
-    grid = np.vstack([xx.ravel(), yy.ravel()])
-
-    class1 = X_emb_train[labels == G1]
-    class2 = X_emb_train[labels == G2]
-
-    kde1 = gaussian_kde(class1.T, bw_method="scott")
-    kde2 = gaussian_kde(class2.T, bw_method="scott")
-
-    z1 = kde1(grid).reshape(xx.shape)
-    z2 = kde2(grid).reshape(xx.shape)
-
-    q = 0.6
-    level1 = np.quantile(z1, q)
-    level2 = np.quantile(z2, q)
-
-    def normalise(z, clip=0.98):
-        zmax = np.quantile(z, clip)
-        return np.clip(z / zmax, 0, 1)
-
-    alpha1 = normalise(z1) ** 0.5
-    alpha2 = normalise(z2) ** 0.5
-    alpha1[z1 < level1] = 0.0
-    alpha2[z2 < level2] = 0.0
-
-    overlap_mask = (alpha1 > 0) & (alpha2 > 0)
-    alpha_overlap = np.maximum(alpha1, alpha2)
-    alpha_overlap[~overlap_mask] = 0.0
-    alpha1[overlap_mask] = 0.0
-    alpha2[overlap_mask] = 0.0
-
-    eps = 1e-12
-    total = z1 + z2 + eps
-    t = (z1 - z2) / total
-    shift_strength = 0.3
-
-    R = np.full_like(t, 0.5)
-    Gch = np.full_like(t, 0.5)
-    B = np.full_like(t, 0.5)
-    pos = t > 0
-    R[pos] += shift_strength * t[pos]
-    Gch[pos] -= shift_strength * t[pos]
-    B[pos] -= shift_strength * t[pos]
-    neg = t < 0
-    B[neg] += shift_strength * (-t[neg])
-    R[neg] -= shift_strength * (-t[neg])
-    Gch[neg] -= shift_strength * (-t[neg])
-
-    H, W = alpha1.shape
-    shape4 = (H, W, 4)
-    red_img = np.zeros(shape4);  red_img[..., 0] = 1.0; red_img[..., 3] = alpha1
-    blue_img = np.zeros(shape4); blue_img[..., 2] = 1.0; blue_img[..., 3] = alpha2
-    over_img = np.zeros(shape4)
-    over_img[..., 0] = R; over_img[..., 1] = Gch; over_img[..., 2] = B
-    over_img[..., 3] = alpha_overlap
-
-    # Alpha-composite onto white background (same draw order as matplotlib imshow)
-    composite = np.ones((H, W, 3), dtype=np.float32)
-    for layer in [over_img, red_img, blue_img]:
-        a = layer[..., 3:4]
-        composite = layer[..., :3] * a + composite * (1 - a)
-
-    # Convert to uint8, flip vertically (matplotlib origin='lower' → plotly top-left)
-    img_uint8 = (np.clip(composite, 0, 1) * 255).astype(np.uint8)
-    img_flipped = img_uint8[::-1, :, :]
-
-    buf = BytesIO()
-    plt.imsave(buf, img_flipped, format="png")
-    buf.seek(0)
-    b64 = base64.b64encode(buf.getvalue()).decode()
-
-    return b64, xmin, xmax, ymin, ymax
+def _load_landscape_as_b64(path):
+    """Notebook'tan kaydedilen PNG'yi base64'e çevirir (cache'li)."""
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
 
 
 def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=None):
     """
-    Plotly interaktif t-SNE grafiği. KDE görüntüsü cache'den gelir,
-    yeni hasta yıldızı varsa scatter trace olarak üstüne eklenir.
+    Plotly interaktif t-SNE grafiği.
+    Arka plan: notebook'tan kaydedilen diagnostic_landscape.png (birebir aynı görsel).
+    Yeni hasta varsa yeşil yıldız olarak plotly scatter trace ile eklenir.
     """
-    X_emb_tuple = tuple(map(tuple, X_emb_train))
-    y_tuple = tuple(y_train.tolist())
-    b64, xmin, xmax, ymin, ymax = _compute_landscape_image(X_emb_tuple, y_tuple)
+    pad = 2.0
+    xmin = float(X_emb_train[:, 0].min()) - pad
+    xmax = float(X_emb_train[:, 0].max()) + pad
+    ymin = float(X_emb_train[:, 1].min()) - pad
+    ymax = float(X_emb_train[:, 1].max()) + pad
+
+    b64 = _load_landscape_as_b64(LANDSCAPE_PATH)
 
     fig = go.Figure()
 
@@ -327,7 +247,7 @@ def plot_diagnostic_landscape(X_emb_train, y_train, lang, new_patient_coords=Non
         showlegend=False, hoverinfo="skip"
     ))
 
-    # KDE yoğunluk görüntüsü
+    # Notebook PNG'si arka plan olarak
     fig.add_layout_image(dict(
         source=f"data:image/png;base64,{b64}",
         xref="x", yref="y",
