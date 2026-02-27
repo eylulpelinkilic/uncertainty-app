@@ -391,12 +391,12 @@ def plot_uncertainty_vector(x_new_vec_df, lang):
 # --- KATEGORİK & GRUP HARİTALARI ---
 yes_no_map = {"No": 0, "Yes": 1}
 categorical_map = {
-    "GENDER": {"Female": 0, "Male": 1},
+    "SEX": {"Female": 0, "Male": 1},
     "Socioeconomic Status": {"Poor": 0, "Good": 1},
     "Chest Pain Character": {"None": 0, "Stabbing / Localized": 1, "Pressure / Anginal": 2},
     "Infection type": {"URTI": 1, "Diarrhea": 2, "Vaccine": 3, "Other": 4},
     "DM": yes_no_map, "HT": yes_no_map, "HL": yes_no_map, "FH": yes_no_map,
-    "SIGARA": yes_no_map, "KBY": yes_no_map, "PRIOR_CAD": yes_no_map,
+    "SIGARA": yes_no_map, "KBY": yes_no_map, "PRIOR_KAH": yes_no_map,
     "HIPOTIROIDI": yes_no_map, "Chest Pain": yes_no_map, "Radiation": yes_no_map,
     "Arm Pain": yes_no_map, "Back Pain": yes_no_map, "Epigastric Pain": yes_no_map,
     "Relation with exercise": yes_no_map, "Relation with Position": yes_no_map,
@@ -411,7 +411,7 @@ categorical_map = {
     "HIPERTIROIDI": yes_no_map, "REYNAULD": yes_no_map,
 }
 KEY_FEATURES = [
-    "AGE", "GENDER", "Chest Pain Character", "PEAK_TROP",
+    "AGE", "SEX", "Chest Pain Character", "PEAK_TROP",
     "Segmentary Wall Motion Abnormality", "MRI_LGE"
 ]
 SYMPTOM_FEATURES = [
@@ -421,7 +421,7 @@ SYMPTOM_FEATURES = [
     "Any Previous Pain Attacks"
 ]
 HISTORY_FEATURES = [
-    "DM", "HT", "HL", "FH", "SIGARA", "KBY", "PRIOR_CAD", "HIPOTIROIDI",
+    "DM", "HT", "HL", "FH", "SIGARA", "KBY", "PRIOR_KAH", "HIPOTIROIDI",
     "Socioeconomic Status", "Recent Infection(4 hafta)", "Infection type",
     "KANSER_KEMOTERAPI", "TASI_BRADIKARDI", "MADDE_ILAC_KULLANIMI",
     "Alcohol", "KOAH", "PAH", "HIPERTIROIDI", "REYNAULD"
