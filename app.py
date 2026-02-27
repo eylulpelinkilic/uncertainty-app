@@ -173,6 +173,10 @@ LANG_STRINGS = {
     "placeholder_select": {
         "ENG": "Select an option...",
         "TR": "Bir seçenek seçin..."
+    },
+    "demo_selector_label": {
+        "ENG": "Quick Demo Patient",
+        "TR": "Hızlı Demo Hasta"
     }
 }
 
@@ -206,6 +210,19 @@ def load_artifacts():
         st.error(f"Error loading artifacts: {e}")
         st.error("Please ensure best_model_finetuned.pkl, model_metadata.pkl, and app_artifacts/embedding_data.npz exist.")
         return None
+
+@st.cache_data
+def load_demo_patients():
+    """demo_patients.txt dosyasından demo hasta verilerini yükler."""
+    path = os.path.join(_BASE, "demo_patients.txt")
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+        return raw.get("patients", raw) if isinstance(raw, dict) else raw
+    except Exception:
+        return []
 
 # --- TAHMİNLEME FONKSİYONLARI ---
 def find_tsne_position(x_new_std, X_std_train, X_emb_train, k=5):
@@ -359,14 +376,20 @@ LAB_ECG_FEATURES = [
 ]
 
 # --- ANINDA DOĞRULAMA YAPAN WIDGET FONKSİYONU ---
-def render_feature_widget(feature, data_dict):
+def render_feature_widget(feature, data_dict, prefill=None):
     if feature in categorical_map:
         options_map = categorical_map[feature]
         options_list = list(options_map.keys())
+        default_index = None
+        if prefill is not None:
+            for i, val in enumerate(options_map.values()):
+                if val == prefill:
+                    default_index = i
+                    break
         selected_option = st.selectbox(
             label=feature,
             options=options_list,
-            index=None,
+            index=default_index,
             placeholder=T("placeholder_select")
         )
         data_dict[feature] = options_map[selected_option] if selected_option is not None else None
@@ -379,7 +402,7 @@ def render_feature_widget(feature, data_dict):
 
         data_dict[feature] = st.number_input(
             feature,
-            value=None,
+            value=float(prefill) if prefill is not None else None,
             placeholder=T("placeholder_number"),
             format="%.4f",
             min_value=min_val,
@@ -406,16 +429,34 @@ if artifacts is not None:
     
     # --- BASİT BAŞLIK VE DİL SEÇİMİ (APP BAR İPTAL EDİLDİ) ---
     st.title(T("main_title"))
-    
-    st.radio(
-        "Language / Dil",
-        options=['TR', 'ENG'], # DEĞİŞİKLİK: TR ilk sırada
-        index=0 if lang == 'TR' else 1, # DEĞİŞİKLİK: Varsayılan index 0 (TR)
-        key="language", # State'i günceller
-        horizontal=True,
-    )
-    
-    st.divider() # Başlık ve içerik arasına ayırıcı çizgi
+
+    demo_patients = load_demo_patients()
+    _NO_SEL = "───"
+    _demo_options = [_NO_SEL] + [p["name"] for p in demo_patients]
+
+    _hdr_lang, _hdr_demo = st.columns([1, 2])
+    with _hdr_lang:
+        st.radio(
+            "Language / Dil",
+            options=['TR', 'ENG'],
+            index=0 if lang == 'TR' else 1,
+            key="language",
+            horizontal=True,
+        )
+    with _hdr_demo:
+        if demo_patients:
+            _selected_demo = st.selectbox(
+                T("demo_selector_label"),
+                options=_demo_options,
+                index=0,
+                key="demo_patient_key",
+            )
+            _demo_idx = _demo_options.index(_selected_demo) - 1
+            prefill_data = demo_patients[_demo_idx]["data"] if _demo_idx >= 0 else {}
+        else:
+            prefill_data = {}
+
+    st.divider()
     
     # --- Ana Arayüz (2 Sütun) ---
     col1, col2 = st.columns([1, 1]) 
@@ -432,29 +473,29 @@ if artifacts is not None:
             with st.expander(T("key_features"), expanded=False): 
                 for feature in KEY_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data)
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
                         processed_features.add(feature)
             with st.expander(T("symptoms"), expanded=False):
                 for feature in SYMPTOM_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data)
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
                         processed_features.add(feature)
             with st.expander(T("history"), expanded=False):
                 for feature in HISTORY_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data)
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
                         processed_features.add(feature)
             with st.expander(T("labs"), expanded=False):
                 for feature in LAB_ECG_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data)
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
                         processed_features.add(feature)
             
             other_features = [f for f in feature_list if f not in processed_features]
             if other_features:
                 with st.expander(T("other_features"), expanded=False):
                     for feature in other_features:
-                        render_feature_widget(feature, patient_data)
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
             
             submit_button = st.form_submit_button(
                 T("calculate_button"),
