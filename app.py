@@ -375,6 +375,13 @@ LAB_ECG_FEATURES = [
     "ECG_Q waves", "MRI_T2", "INHOSPITAL_EX", "EX_TARIHI", "BMI"
 ]
 
+# Klinik olarak tam sayı rapor edilen numerik özellikler
+_INTEGER_FEATURES = {
+    "AGE", "Any Previous Pain Attacks",
+    "PEAK_TROP", "CK-MB", "GLUKOZ", "PLT",
+    "AST", "ALT", "TOTAL_KOLESTEROL", "TG", "LDL", "HDL",
+}
+
 # --- ANINDA DOĞRULAMA YAPAN WIDGET FONKSİYONU ---
 def render_feature_widget(feature, data_dict, prefill=None, key_suffix=""):
     # key_suffix, demo hasta değiştiğinde widget'ların sıfırlanmasını sağlar
@@ -396,20 +403,27 @@ def render_feature_widget(feature, data_dict, prefill=None, key_suffix=""):
             key=wkey,
         )
         data_dict[feature] = options_map[selected_option] if selected_option is not None else None
+    elif feature in _INTEGER_FEATURES:
+        min_val = 0
+        max_val = 120 if feature == "AGE" else None
+        data_dict[feature] = st.number_input(
+            feature,
+            value=int(prefill) if prefill is not None else None,
+            placeholder=T("placeholder_number"),
+            format="%d",
+            step=1,
+            min_value=min_val,
+            max_value=max_val,
+            key=wkey,
+        )
     else:
-        min_val = 0.0
-        max_val = None
-        if feature == "AGE":
-            min_val = 0.0
-            max_val = 120.0
-
         data_dict[feature] = st.number_input(
             feature,
             value=float(prefill) if prefill is not None else None,
             placeholder=T("placeholder_number"),
-            format="%.4f",
-            min_value=min_val,
-            max_value=max_val,
+            format="%.2f",
+            step=0.01,
+            min_value=0.0,
             key=wkey,
         )
 
