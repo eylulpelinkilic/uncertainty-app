@@ -376,7 +376,9 @@ LAB_ECG_FEATURES = [
 ]
 
 # --- ANINDA DOĞRULAMA YAPAN WIDGET FONKSİYONU ---
-def render_feature_widget(feature, data_dict, prefill=None):
+def render_feature_widget(feature, data_dict, prefill=None, key_suffix=""):
+    # key_suffix, demo hasta değiştiğinde widget'ların sıfırlanmasını sağlar
+    wkey = f"w__{feature}__{key_suffix}"
     if feature in categorical_map:
         options_map = categorical_map[feature]
         options_list = list(options_map.keys())
@@ -390,7 +392,8 @@ def render_feature_widget(feature, data_dict, prefill=None):
             label=feature,
             options=options_list,
             index=default_index,
-            placeholder=T("placeholder_select")
+            placeholder=T("placeholder_select"),
+            key=wkey,
         )
         data_dict[feature] = options_map[selected_option] if selected_option is not None else None
     else:
@@ -406,7 +409,8 @@ def render_feature_widget(feature, data_dict, prefill=None):
             placeholder=T("placeholder_number"),
             format="%.4f",
             min_value=min_val,
-            max_value=max_val
+            max_value=max_val,
+            key=wkey,
         )
 
 # --- ANA UYGULAMA MANTIĞI ---
@@ -470,32 +474,32 @@ if artifacts is not None:
             patient_data = {}
             processed_features = set()
 
-            with st.expander(T("key_features"), expanded=False): 
+            with st.expander(T("key_features"), expanded=False):
                 for feature in KEY_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature), key_suffix=str(_demo_idx))
                         processed_features.add(feature)
             with st.expander(T("symptoms"), expanded=False):
                 for feature in SYMPTOM_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature), key_suffix=str(_demo_idx))
                         processed_features.add(feature)
             with st.expander(T("history"), expanded=False):
                 for feature in HISTORY_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature), key_suffix=str(_demo_idx))
                         processed_features.add(feature)
             with st.expander(T("labs"), expanded=False):
                 for feature in LAB_ECG_FEATURES:
                     if feature in feature_list:
-                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature), key_suffix=str(_demo_idx))
                         processed_features.add(feature)
-            
+
             other_features = [f for f in feature_list if f not in processed_features]
             if other_features:
                 with st.expander(T("other_features"), expanded=False):
                     for feature in other_features:
-                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature))
+                        render_feature_widget(feature, patient_data, prefill=prefill_data.get(feature), key_suffix=str(_demo_idx))
             
             submit_button = st.form_submit_button(
                 T("calculate_button"),
