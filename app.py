@@ -105,6 +105,10 @@ LANG_STRINGS = {
     "bar_chart_title": {"ENG": "Patient's Uncertainty Vector", "TR": "Hastanın Belirsizlik Vektörü"},
     "bar_xaxis": {"ENG": "Uncertainty Score", "TR": "Belirsizlik Skoru"},
     "bar_yaxis": {"ENG": "Feature", "TR": "Özellik"},
+    "about_banner": {
+        "ENG": "This tool positions a new patient on the **Myocarditis vs. ACS** diagnostic landscape based on their clinical features. Enter patient data on the left and click **Calculate**.",
+        "TR": "Bu araç, klinik özellikler temelinde yeni bir hastayı **Miyokardit ve AKS** tanısal haritası üzerinde konumlandırır. Sol taraftaki forma hasta verilerini girin ve **Hesapla**'ya tıklayın."
+    },
     "welcome_header": {"ENG": "About this Tool", "TR": "Araç Hakkında"},
     "welcome_info": {
         "ENG": "Please enter patient data on the left and click 'Calculate' to begin analysis.",
@@ -474,8 +478,9 @@ if artifacts is not None:
         else:
             prefill_data = {}
 
+    st.info(T("about_banner"))
     st.divider()
-    
+
     # --- Ana Arayüz (2 Sütun) ---
     col1, col2 = st.columns([1, 1]) 
 
@@ -621,12 +626,9 @@ if artifacts is not None:
                     use_container_width=True
                 )
             
-            st.divider() # Grafik ve açıklama arasına çizgi
-            
-            # 2. SONRA "ARAÇ HAKKINDA" BİLGİSİNİ GÖSTER
-            st.header(T("welcome_header"))
-            st.info(T("welcome_info"))
-            st.markdown(T("welcome_text"), unsafe_allow_html=True)
+            with st.expander(T("welcome_header"), expanded=False):
+                st.info(T("welcome_info"))
+                st.markdown(T("welcome_text"), unsafe_allow_html=True)
 else:
     # Artifact'lar yüklenemezse
     st.error(T("load_error"))
