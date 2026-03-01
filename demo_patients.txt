@@ -1,5 +1,5 @@
 {
-  "note": "Gerçek hasta verileri (NEW_Miyokardit_08.12.2025.xlsx). Satır indeksleri: Miyokardit — 2,5,7,6,9 | AKS — 87,86,90,83,84",
+  "note": "Gerçek hasta verileri (NEW_Miyokardit_08.12.2025.xlsx). Satır indeksleri: Miyokardit — 2,5,7,12,9 | AKS — 87,86,90,83,92",
   "patients": [
     {
       "name": "Hasta 1 — K/19 (Miyokardit)",
@@ -56,21 +56,21 @@
       }
     },
     {
-      "name": "Hasta 4 — E/55 (Miyokardit)",
+      "name": "Hasta 4 — E/18 (Miyokardit)",
       "data": {
-        "AGE": 55, "SEX": 1,
-        "DM": 0, "HT": 0, "HL": 0, "FH": 0, "SIGARA": 1, "KBY": 0, "PRIOR_KAH": 0, "KOAH": 0,
-        "Chest Pain": 1, "Chest Pain Character": 2, "Any Previous Pain Attacks": 0,
-        "Chest Pain Duration(saat)": 48,
+        "AGE": 18, "SEX": 1,
+        "DM": 0, "HT": 0, "HL": 0, "FH": 0, "SIGARA": 0, "KBY": 0, "PRIOR_KAH": 0, "KOAH": 0,
+        "Chest Pain": 1, "Chest Pain Character": 1, "Any Previous Pain Attacks": 0,
+        "Chest Pain Duration(saat)": 36,
         "Radiation": 0, "Arm Pain": 0, "Back Pain": 0, "Epigastric Pain": 0,
         "Relation with exercise": 0, "Relation with Position": 0,
         "Dyspnea": 0, "Fatigue": 0, "Nausea": 0, "Çarpıntı": 0,
         "Recent Infection(4 hafta)": 1,
-        "PEAK_TROP": 475, "CK-MB": 12.69, "GLUKOZ": 103,
-        "WBCpik": 8.15, "NEUpik": 5.5, "LYMPpik": 1.7, "EOSpik": 0.08, "MONOpik": 0.5,
-        "HB": 14, "HTC": 43, "PLT": 201, "KREATIN": 0.8,
-        "AST": 34, "ALT": 17,
-        "TOTAL_KOLESTEROL": 179, "TG": 176, "LDL": 118, "HDL": 26
+        "PEAK_TROP": 231, "CK-MB": 5.4, "GLUKOZ": 100,
+        "WBCpik": 8.45, "NEUpik": 5.6, "LYMPpik": 2.2, "EOSpik": 0.18, "MONOpik": 0.78,
+        "HB": 15, "HTC": 46, "PLT": 232, "KREATIN": 1.1,
+        "AST": 16, "ALT": 12,
+        "TOTAL_KOLESTEROL": 117, "TG": 66, "LDL": 61, "HDL": 43
       }
     },
     {
@@ -164,21 +164,21 @@
       }
     },
     {
-      "name": "Hasta 10 — K/33 (AKS)",
+      "name": "Hasta 10 — E/34 (AKS)",
       "data": {
-        "AGE": 33, "SEX": 0,
-        "DM": 1, "HT": 0, "HL": 0, "FH": 0, "SIGARA": 0, "KBY": 0, "PRIOR_KAH": 0, "KOAH": 0,
-        "Chest Pain": 1, "Chest Pain Character": 1, "Any Previous Pain Attacks": 0,
-        "Chest Pain Duration(saat)": 48,
+        "AGE": 34, "SEX": 1,
+        "DM": 0, "HT": 0, "HL": 0, "FH": 0, "SIGARA": 1, "KBY": 0, "PRIOR_KAH": 0, "KOAH": 0,
+        "Chest Pain": 1, "Chest Pain Character": 2, "Any Previous Pain Attacks": 0,
+        "Chest Pain Duration(saat)": 4,
         "Radiation": 0, "Arm Pain": 0, "Back Pain": 0, "Epigastric Pain": 0,
         "Relation with exercise": 0, "Relation with Position": 0,
         "Dyspnea": 0, "Fatigue": 0, "Nausea": 0, "Çarpıntı": 0,
         "Recent Infection(4 hafta)": 0,
-        "PEAK_TROP": 0.026, "CK-MB": 15, "GLUKOZ": 88,
-        "WBCpik": 5.4, "NEUpik": 2.7, "LYMPpik": 2.4, "EOSpik": 0.09, "MONOpik": 0.38,
-        "HB": 10, "HTC": 33, "PLT": 233, "KREATIN": 0.5,
-        "AST": 15, "ALT": 10,
-        "TOTAL_KOLESTEROL": 195, "TG": 102, "LDL": 114, "HDL": 61
+        "PEAK_TROP": 283, "CK-MB": 2.84, "GLUKOZ": 100,
+        "WBCpik": 11.5, "NEUpik": 7.3, "LYMPpik": 3.3, "EOSpik": 0.3, "MONOpik": 0.66,
+        "HB": 15, "HTC": 45, "PLT": 257, "KREATIN": 0.8,
+        "AST": 31, "ALT": 20,
+        "TOTAL_KOLESTEROL": 210, "TG": 335, "LDL": 143, "HDL": 33
       }
     }
   ]
