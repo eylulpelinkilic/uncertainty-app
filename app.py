@@ -63,7 +63,7 @@ LANG_STRINGS = {
     "key_features": {"ENG": "Key Features", "TR": "Anahtar Özellikler"},
     "symptoms": {"ENG": "Symptoms & Presentation", "TR": "Semptomlar ve Başvuru"},
     "history": {"ENG": "Patient History & Comorbidities", "TR": "Hasta Geçmişi ve Komorbiditeler"},
-    "labs": {"ENG": "Lab, ECG, & Imaging Results", "TR": "Laboratuvar, EKG ve Görüntüleme Sonuçları"},
+    "labs": {"ENG": "Lab Results", "TR": "Laboratuvar Sonuçları"},
     "other_features": {"ENG": "Other Features", "TR": "Diğer Özellikler"},
     "calculate_button": {"ENG": "Calculate Patient Position", "TR": "Hasta Pozisyonunu Hesapla"},
     "header_output": {"ENG": "Patient Position Analysis", "TR": "Hasta Pozisyon Analizi"},
@@ -482,11 +482,11 @@ categorical_map = {
     "HIPERTIROIDI": yes_no_map, "REYNAULD": yes_no_map,
 }
 KEY_FEATURES = [
-    "AGE", "SEX", "Chest Pain Character", "PEAK_TROP",
+    "AGE", "SEX",
     "Segmentary Wall Motion Abnormality", "MRI_LGE"
 ]
 SYMPTOM_FEATURES = [
-    "Chest Pain", "Chest Pain Duration(saat)", "Radiation", "Arm Pain",
+    "Chest Pain", "Chest Pain Character", "Chest Pain Duration(saat)", "Radiation", "Arm Pain",
     "Back Pain", "Epigastric Pain", "Relation with exercise",
     "Relation with Position", "Dyspnea", "Fatigue", "Nausea", "Çarpıntı",
     "Any Previous Pain Attacks"
@@ -498,7 +498,7 @@ HISTORY_FEATURES = [
     "Alcohol", "KOAH", "PAH", "HIPERTIROIDI", "REYNAULD"
 ]
 LAB_ECG_FEATURES = [
-    "Troponin_Sonucu", "TROPONIN_CUTOFF_DEGERI", "TROP_KATSAYISI", "CK-MB",
+    "PEAK_TROP", "Troponin_Sonucu", "TROPONIN_CUTOFF_DEGERI", "TROP_KATSAYISI", "CK-MB",
     "GLUKOZ", "WBCpik", "NEUpik", "LYMPpik", "EOSpik", "MONOpik", "HB",
     "HTC", "PLT", "KREATIN", "AST", "ALT", "ALBUMIN", "TOTAL_KOLESTEROL",
     "TG", "LDL", "HDL", "hs-CRP", "hs-CRP_CUTOFF", "hs-CRP_FOLD",
