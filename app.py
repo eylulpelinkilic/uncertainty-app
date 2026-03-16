@@ -774,7 +774,7 @@ if artifacts is not None:
                     T("landscape_view_label"),
                     _view_options,
                     horizontal=True,
-                    key="landscape_view_result"
+                    key="landscape_view"
                 )
                 if _view_sel == T("view_myo"):
                     landscape_img = render_landscape_filtered(
@@ -809,7 +809,7 @@ if artifacts is not None:
                 T("landscape_view_label"),
                 _view_options_w,
                 horizontal=True,
-                key="landscape_view_welcome"
+                key="landscape_view"
             )
             if _view_sel_w == T("view_myo"):
                 st.image(render_landscape_filtered(None, None, 1, T("legend_g1"), T("legend_new")), use_container_width=True)
