@@ -103,6 +103,11 @@ LANG_STRINGS = {
         "ENG": "Top 20 features contributing to uncertainty:",
         "TR": "Belirsizliğe katkıda bulunan ilk 20 özellik:"
     },
+    "plot_title_global_unc": {"ENG": "Overall Feature Uncertainty (Training Set)", "TR": "Genel Özellik Belirsizliği (Eğitim Seti)"},
+    "plot_top20_global": {
+        "ENG": "Top 20 features by mean absolute uncertainty score across all training patients:",
+        "TR": "Tüm eğitim hastalarında ortalama mutlak belirsizlik skoruna göre ilk 20 özellik:"
+    },
     "legend_g1": {"ENG": "Grup 1 (Myocarditis)", "TR": "Grup 1 (Miyokardit)"},
     "legend_g2": {"ENG": "Grup 2 (ACS)", "TR": "Grup 2 (AKS)"},
     "legend_new": {"ENG": "New Patient", "TR": "Yeni Hasta"},
@@ -825,6 +830,31 @@ if artifacts is not None:
                     use_container_width=True
                 )
             
+            # --- Global uncertainty bar chart ---
+            st.subheader(T("plot_title_global_unc"))
+            st.write(T("plot_top20_global"))
+            _tsne_feats = list(tsne_scaler.feature_names_in_)
+            _mean_abs = np.mean(np.abs(embedding_data['X_std']), axis=0)
+            _global_df = pd.DataFrame({"Feature": _tsne_feats, "Uncertainty Score": _mean_abs}) \
+                .sort_values("Uncertainty Score", ascending=False).head(20)
+            fig_global = go.Figure()
+            fig_global.add_trace(go.Bar(
+                x=_global_df['Uncertainty Score'],
+                y=_global_df['Feature'],
+                orientation='h',
+                marker=dict(color=COLOR_BLUE)
+            ))
+            fig_global.update_layout(
+                xaxis_title=T("bar_xaxis"),
+                yaxis_title=T("bar_yaxis"),
+                plot_bgcolor=COLOR_BACKGROUND,
+                paper_bgcolor=COLOR_BACKGROUND,
+                font_color=COLOR_TEXT,
+                yaxis=dict(autorange="reversed"),
+                height=max(400, 20 * 20)
+            )
+            st.plotly_chart(fig_global, use_container_width=True)
+
             with st.expander(T("welcome_header"), expanded=False):
                 st.info(T("welcome_info"))
                 st.markdown(T("welcome_text"), unsafe_allow_html=True)
