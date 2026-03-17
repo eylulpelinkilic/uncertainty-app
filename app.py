@@ -103,7 +103,7 @@ LANG_STRINGS = {
         "ENG": "Top 20 features contributing to uncertainty:",
         "TR": "Belirsizliğe katkıda bulunan ilk 20 özellik:"
     },
-    "plot_title_global_unc": {"ENG": "Features Contributing to Certainty (Training Set)", "TR": "Belirliğe Katkıda Bulunan Özellikler (Eğitim Seti)"},
+    "plot_title_global_unc": {"ENG": "Features Contributing to Certainty", "TR": "Belirliğe Katkıda Bulunan Özellikler"},
     "plot_top20_global": {
         "ENG": "Top 20 features with the lowest mean absolute uncertainty score across all training patients:",
         "TR": "Tüm eğitim hastalarında en düşük ortalama mutlak belirsizlik skoruna sahip 20 özellik:"
@@ -835,7 +835,8 @@ if artifacts is not None:
             st.write(T("plot_top20_global"))
             _tsne_feats = list(tsne_scaler.feature_names_in_)
             _mean_abs = np.mean(np.abs(embedding_data['X_std']), axis=0)
-            _global_df = pd.DataFrame({"Feature": _tsne_feats, "Uncertainty Score": _mean_abs}) \
+            _global_df = pd.DataFrame({"Feature": _tsne_feats, "Uncertainty Score": _mean_abs})
+            _global_df = _global_df[_global_df["Uncertainty Score"] > 0] \
                 .sort_values("Uncertainty Score", ascending=True).head(20)
             fig_global = go.Figure()
             fig_global.add_trace(go.Bar(
