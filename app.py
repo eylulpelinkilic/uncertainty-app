@@ -834,8 +834,8 @@ if artifacts is not None:
             st.subheader(T("plot_title_global_unc"))
             st.write(T("plot_top20_global"))
             _tsne_feats = list(tsne_scaler.feature_names_in_)
-            _mean_abs = np.mean(np.abs(embedding_data['X_std']), axis=0)
-            _global_df = pd.DataFrame({"Feature": _tsne_feats, "Uncertainty Score": _mean_abs})
+            _mean_raw = tsne_scaler.mean_
+            _global_df = pd.DataFrame({"Feature": _tsne_feats, "Uncertainty Score": _mean_raw})
             _global_df = _global_df[_global_df["Uncertainty Score"] > 0] \
                 .sort_values("Uncertainty Score", ascending=True).head(20)
             fig_global = go.Figure()
